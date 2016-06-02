@@ -32,12 +32,16 @@ def _read_words(filename):
 
 
 def _build_vocab(filename):
+  # read raw input data from filename
+  # only contain the basic word
   data = _read_words(filename)
 
+  # count the word number
   counter = collections.Counter(data)
   count_pairs = sorted(counter.items(), key=lambda x: (-x[1], x[0]))
 
   words, _ = list(zip(*count_pairs))
+  # mark every word
   word_to_id = dict(zip(words, range(len(words))))
 
   return word_to_id
@@ -72,6 +76,7 @@ def ptb_raw_data(data_path=None):
   test_path = os.path.join(data_path, "ptb.test.txt")
 
   word_to_id = _build_vocab(train_path)
+  # transfer data words to id
   train_data = _file_to_word_ids(train_path, word_to_id)
   valid_data = _file_to_word_ids(valid_path, word_to_id)
   test_data = _file_to_word_ids(test_path, word_to_id)
