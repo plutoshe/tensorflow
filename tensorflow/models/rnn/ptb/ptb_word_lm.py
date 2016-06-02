@@ -162,13 +162,12 @@ def ptc_iterator(raw_data, batch_size, num_steps):
   epoch_size = (batch_len - 1) // num_steps
   if epoch_size == 0:
     raise ValueError("epoch_size == 0, decrease batch_size or num_steps")
-  x = []
-  for row in data:
-    x.append([chinese_id_to_pinyin_id[j] for j in row[i*num_steps:(i+1)*num_steps]])
-  y = data[:, i*num_steps+1:(i+1)*num_steps+1]
-  print("======x", x)
-# print(y)
-  yield (x, y)
+  for i in range(epoch_size):
+    x = []
+    for row in data:
+      x.append([chinese_id_to_pinyin_id[j] for j in row[i*num_steps:(i+1)*num_steps]])
+    y = data[:, i*num_steps+1:(i+1)*num_steps+1]
+    yield (x, y)
 
 def pinyin_convert():
   return
@@ -190,9 +189,9 @@ class PTBModel(object):
     # chinese_size
 
     self._input_data = tf.placeholder(tf.int32, [batch_size, num_steps])
-    # print(self._input_data.get_shape())
+    print(self._input_data.get_shape())
     self._targets = tf.placeholder(tf.int32, [batch_size, num_steps])
-    # print(self._targets.get_shape())
+    print(self._targets.get_shape())
     # raw_input("")
     # Slightly better results can be obtained with forget gate biases
     # initialized to 1 but the hyperparameters of the model would need to be
@@ -210,8 +209,8 @@ class PTBModel(object):
     self._initial_state = cell.zero_state(batch_size, tf.float32)
     with tf.device("/cpu:0"):
       embedding = tf.get_variable("embedding", [piyin_size, size])
-      # print("embeding:", embedding.get_shape())
-      # print("_input_data:", self._input_data.get_shape())
+      print("embeding:", embedding.get_shape())
+      print("_input_data:", self._input_data.get_shape())
       inputs = tf.nn.embedding_lookup(embedding, self._input_data)
       # print("inputs shape:", inputs.get_shape())
       # print("------self._input_data: ", self._input_data)
@@ -257,7 +256,6 @@ class PTBModel(object):
     softmax_w = tf.get_variable("softmax_w", [size, chinese_size])
     softmax_b = tf.get_variable("softmax_b", [chinese_size])
     logits = tf.matmul(output, softmax_w) + softmax_b
-    # print("logits:", logits)
     loss = tf.nn.seq2seq.sequence_loss_by_example(
         [logits],
         [tf.reshape(self._targets, [-1])],
@@ -315,7 +313,7 @@ class SmallConfig(object):
   max_grad_norm = 5
   num_layers = 2
   num_steps = 20
-  hidden_size = 2000
+  hidden_size = 300
   max_epoch = 4
   max_max_epoch = 13
   keep_prob = 1.0
@@ -380,12 +378,8 @@ def run_epoch(session, m, data, eval_op, verbose=False):
   state = m.initial_state.eval()
   for step, (x, y) in enumerate(ptc_iterator(data, m.batch_size,
                                                     m.num_steps)):
-    print("======================\n\n\n\n\n\n", m.cost)
+    print("step:", step)
     print("final state:", m.final_state)
-    print("eval op:", eval_op)
-    print("x: ", x)
-    print("y: ", y)
-    print("state: ", state)
     cost, state, _ = session.run([m.cost, m.final_state, eval_op],
                                  {m.input_data: x,
                                   m.targets: y,
