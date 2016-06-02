@@ -60,6 +60,7 @@ import time
 
 import numpy as np
 import tensorflow as tf
+import os
 
 from tensorflow.models.rnn.ptb import reader
 
@@ -73,6 +74,109 @@ flags.DEFINE_string("data_path", None, "data_path")
 
 FLAGS = flags.FLAGS
 
+def _build_vocab_chinese(pinyinfile, markingfile):
+  # read raw input data from filename
+  # only contain the basic word
+  # with tf.gfile.GFile(pinyinfile, "r") as f:
+  #   data = f.read().replace("\n", "<eos>").split()
+
+  with open(pinyinfile, "r") as f:
+    data = f.read().replace("\n", " ").split()
+
+  pinyin_to_id = dict(zip(data, range(len(data))))
+  chinese_to_pinyin = dict()
+  with open(markingfile, "r") as f:
+    for line in f:
+        line = unicode(line.replace("\n", ""), 'utf-8')
+        tokens = line.split(" ")
+        for i in range(0, int(len(tokens) / 3)):
+          chinese_to_pinyin[tokens[3 * i]] = tokens[3 * i + 2]
+  # print(chinese_to_pinyin)
+  chinese_to_id = dict(zip([key for key, _ in chinese_to_pinyin.items()], range(len(chinese_to_pinyin))))
+  chinese_id_to_pinyin_id = dict((chinese_to_id[k], pinyin_to_id[v]) for k, v in chinese_to_pinyin.items())
+  return pinyin_to_id, chinese_to_id, chinese_id_to_pinyin_id, len(pinyin_to_id), len(chinese_to_id)
+
+pinyin_to_id, chinese_to_id, chinese_id_to_pinyin_id, piyin_size, chinese_size = _build_vocab_chinese('/Users/plutoshe/PlutoShe/Program/golang/src/github.com/plutoshe/tensorflow/tensorflow/models/rnn/ptb/pinyin.dat', '/Users/plutoshe/PlutoShe/Program/golang/src/github.com/plutoshe/tensorflow/tensorflow/models/rnn/ptb/marking.dat')
+
+def _read_words1(filename):
+  with tf.gfile.GFile(filename, "r") as f:
+    return f.read().replace("\n", " ").split()
+
+def _file_to_chinese_id(filename, word_to_id):
+  data = _read_words1(filename)
+  ids = []
+  for sent in data:
+    tokens = unicode(sent,'utf-8')
+    for i in range(len(tokens)):
+      word = tokens[i]
+      it = word_to_id.get(word)
+      if it is None:
+        it = word_to_id.get('unk')
+      ids.append(it)
+  return ids
+  # return [word_to_id[word] for word in data]
+
+
+
+
+def ptc_raw_data(data_path=None):
+  train_path = os.path.join(data_path, "ptc.train.txt")
+  valid_path = os.path.join(data_path, "ptc.valid.txt")
+  test_path = os.path.join(data_path, "ptc.test.txt")
+
+
+  # transfer data words to id
+  train_data = _file_to_chinese_id(train_path, chinese_to_id)
+  valid_data = _file_to_chinese_id(valid_path, chinese_to_id)
+  test_data = _file_to_chinese_id(test_path, chinese_to_id)
+
+  return train_data, valid_data, test_data, 0
+
+
+def ptc_iterator(raw_data, batch_size, num_steps):
+  """Iterate on the raw PTB data.
+
+  This generates batch_size pointers into the raw PTB data, and allows
+  minibatch iteration along these pointers.
+
+  Args:
+    raw_data: one of the raw data outputs from ptb_raw_data.
+    batch_size: int, the batch size.
+    num_steps: int, the number of unrolls.
+
+  Yields:
+    Pairs of the batched data, each a matrix of shape [batch_size, num_steps].
+    The second element of the tuple is the same data time-shifted to the
+    right by one.
+
+  Raises:
+    ValueError: if batch_size or num_steps are too high.
+  """
+  raw_data = np.array(raw_data, dtype=np.int32)
+  data_len = len(raw_data)
+  print("data_len:", data_len)
+  batch_len = data_len // batch_size
+  print("batch_len:", batch_len)
+  data = np.zeros([batch_size, batch_len], dtype=np.int32)
+  for i in range(batch_size):
+    data[i] = raw_data[batch_len * i:batch_len * (i + 1)]
+
+  epoch_size = (batch_len - 1) // num_steps
+  if epoch_size == 0:
+    raise ValueError("epoch_size == 0, decrease batch_size or num_steps")
+  for i in range(epoch_size):
+    x = []
+    for row in data:
+      x.append([chinese_id_to_pinyin_id[j] for j in row[i*num_steps:(i+1)*num_steps]])
+    y = data[:, i*num_steps+1:(i+1)*num_steps+1]
+    yield (x, y)
+  # print("======x", x)
+# print(y)
+
+
+def pinyin_convert():
+  return
+
 
 class PTBModel(object):
   """The PTB model."""
@@ -81,11 +185,19 @@ class PTBModel(object):
     self.batch_size = batch_size = config.batch_size
     self.num_steps = num_steps = config.num_steps
     size = config.hidden_size
-    vocab_size = config.vocab_size
+    # print("size:",size)
+
+    # TODO:
+    # add chinese/pinyin character vocabular size
+    # for targe and input
+    # piyin_size
+    # chinese_size
 
     self._input_data = tf.placeholder(tf.int32, [batch_size, num_steps])
+    print(self._input_data.get_shape())
     self._targets = tf.placeholder(tf.int32, [batch_size, num_steps])
-
+    print(self._targets.get_shape())
+    # raw_input("")
     # Slightly better results can be obtained with forget gate biases
     # initialized to 1 but the hyperparameters of the model would need to be
     # different than reported in the paper.
@@ -93,16 +205,26 @@ class PTBModel(object):
     if is_training and config.keep_prob < 1:
       lstm_cell = tf.nn.rnn_cell.DropoutWrapper(
           lstm_cell, output_keep_prob=config.keep_prob)
+    # print(config.num_layers)
+    # print(lstm_cell)
     cell = tf.nn.rnn_cell.MultiRNNCell([lstm_cell] * config.num_layers)
+    # print(cell)
+
 
     self._initial_state = cell.zero_state(batch_size, tf.float32)
-
     with tf.device("/cpu:0"):
-      embedding = tf.get_variable("embedding", [vocab_size, size])
+      embedding = tf.get_variable("embedding", [piyin_size, size])
+      print("embeding:", embedding.get_shape())
+      print("_input_data:", self._input_data.get_shape())
       inputs = tf.nn.embedding_lookup(embedding, self._input_data)
+      # print("inputs shape:", inputs.get_shape())
+      # print("------self._input_data: ", self._input_data)
+      # print("------embedding: ", embedding)
+      # print("------inputs: ", inputs)
 
     if is_training and config.keep_prob < 1:
       inputs = tf.nn.dropout(inputs, config.keep_prob)
+    # print("-----inputs:" ,inputs)
 
     # Simplified version of tensorflow.models.rnn.rnn.py's rnn().
     # This builds an unrolled LSTM for tutorial purposes only.
@@ -114,25 +236,40 @@ class PTBModel(object):
     # inputs = [tf.squeeze(input_, [1])
     #           for input_ in tf.split(1, num_steps, inputs)]
     # outputs, state = rnn.rnn(cell, inputs, initial_state=self._initial_state)
+
+    ## stimulate unrolled rnn operation
     outputs = []
     state = self._initial_state
+    # print('state:', state)
     with tf.variable_scope("RNN"):
+      # for every step
       for time_step in range(num_steps):
         if time_step > 0: tf.get_variable_scope().reuse_variables()
         (cell_output, state) = cell(inputs[:, time_step, :], state)
+        # print('cell_output:', cell_output)
+        # print('state:', state)
         outputs.append(cell_output)
-
+        # print('outputs:', outputs)
+        # raw_input("")
+    # raw_input("")
+    # print("----outputs: ", outputs)
+    # print("--concat", tf.concat(1, outputs))
     output = tf.reshape(tf.concat(1, outputs), [-1, size])
-    softmax_w = tf.get_variable("softmax_w", [size, vocab_size])
-    softmax_b = tf.get_variable("softmax_b", [vocab_size])
+    # print("----outputs: ", outputs)
+    # print("----output: ", output)
+    # from embedding feature to activate wanted word
+    softmax_w = tf.get_variable("softmax_w", [size, chinese_size])
+    softmax_b = tf.get_variable("softmax_b", [chinese_size])
     logits = tf.matmul(output, softmax_w) + softmax_b
+    print("logits:", logits.get_shape())
     loss = tf.nn.seq2seq.sequence_loss_by_example(
         [logits],
         [tf.reshape(self._targets, [-1])],
         [tf.ones([batch_size * num_steps])])
     self._cost = cost = tf.reduce_sum(loss) / batch_size
     self._final_state = state
-
+    # print("loss:", loss)
+    # raw_input("")
     if not is_training:
       return
 
@@ -182,14 +319,13 @@ class SmallConfig(object):
   max_grad_norm = 5
   num_layers = 2
   num_steps = 20
-  hidden_size = 200
+  hidden_size = 2000
   max_epoch = 4
   max_max_epoch = 13
   keep_prob = 1.0
   lr_decay = 0.5
   batch_size = 20
   vocab_size = 10000
-
 
 class MediumConfig(object):
   """Medium config."""
@@ -198,7 +334,7 @@ class MediumConfig(object):
   max_grad_norm = 5
   num_layers = 2
   num_steps = 35
-  hidden_size = 650
+  hidden_size = 6500
   max_epoch = 6
   max_max_epoch = 39
   keep_prob = 0.5
@@ -214,7 +350,7 @@ class LargeConfig(object):
   max_grad_norm = 10
   num_layers = 2
   num_steps = 35
-  hidden_size = 1500
+  hidden_size = 15000
   max_epoch = 14
   max_max_epoch = 55
   keep_prob = 0.35
@@ -246,15 +382,20 @@ def run_epoch(session, m, data, eval_op, verbose=False):
   costs = 0.0
   iters = 0
   state = m.initial_state.eval()
-  for step, (x, y) in enumerate(reader.ptb_iterator(data, m.batch_size,
+  for step, (x, y) in enumerate(ptc_iterator(data, m.batch_size,
                                                     m.num_steps)):
+    # print("======================\n\n\n\n\n\n", m.cost)
+    print("step:", step)
+    print("final state:", m.final_state)
+    print("eval op:", eval_op)
+    raw_input("")
     cost, state, _ = session.run([m.cost, m.final_state, eval_op],
                                  {m.input_data: x,
                                   m.targets: y,
                                   m.initial_state: state})
     costs += cost
-    iters += m.num_steps
 
+    iters += m.num_steps
     if verbose and step % (epoch_size // 10) == 10:
       print("%.3f perplexity: %.3f speed: %.0f wps" %
             (step * 1.0 / epoch_size, np.exp(costs / iters),
@@ -280,14 +421,21 @@ def main(_):
   if not FLAGS.data_path:
     raise ValueError("Must set --data_path to PTB data directory")
 
-  raw_data = reader.ptb_raw_data(FLAGS.data_path)
+  raw_data = ptc_raw_data(FLAGS.data_path)
   train_data, valid_data, test_data, _ = raw_data
 
   config = get_config()
   eval_config = get_config()
   eval_config.batch_size = 1
   eval_config.num_steps = 1
-
+  # tf.Graph() defines current default graph
+  # following ops is consisted in this graph
+  # example:
+  # g = tf.Graph()
+  # with g.as_default():
+  #   # Define operations and tensors in `g`.
+  #   c = tf.constant(30.0)
+  #   assert c.graph is g
   with tf.Graph().as_default(), tf.Session() as session:
     initializer = tf.random_uniform_initializer(-config.init_scale,
                                                 config.init_scale)
@@ -301,6 +449,8 @@ def main(_):
 
     for i in range(config.max_max_epoch):
       lr_decay = config.lr_decay ** max(i - config.max_epoch, 0.0)
+      print(lr_decay)
+      # raw_input("")
       m.assign_lr(session, config.learning_rate * lr_decay)
 
       print("Epoch: %d Learning rate: %.3f" % (i + 1, session.run(m.lr)))
