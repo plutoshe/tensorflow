@@ -760,6 +760,11 @@ tf_gen_op_wrapper_py(
     name = "user_ops",
     hidden = [
         "Fact",
+	"Trial",
+	"Lookahead",
+	"Lookaheadgpu",
+	"Lookaheadgrad",
+	"Lookaheadgradgpu",
     ],
     require_shape_functions = False,
 )
@@ -833,6 +838,7 @@ py_library(
         "ops/variable_scope.py",
         "ops/variables.py",
         "user_ops/user_ops.py",
+        "ops/gen_user_ops.py",
     ],
     srcs_version = "PY2AND3",
     deps = [
