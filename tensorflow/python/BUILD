@@ -720,6 +720,7 @@ py_library(
         "ops/variable_scope.py",
         "ops/variables.py",
         "user_ops/user_ops.py",
+        "ops/gen_user_ops.py",
     ],
     srcs_version = "PY2AND3",
     deps = [

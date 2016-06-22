@@ -226,6 +226,11 @@ StringSplit
 
 # user_ops
 Fact
+Trial
+Lookahead
+Lookaheadgpu
+Lookaheadgrad
+Lookaheadgradgpu
 
 # training_ops
 # (None)
