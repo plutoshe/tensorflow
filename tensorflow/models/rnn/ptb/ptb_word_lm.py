@@ -96,7 +96,7 @@ def _build_vocab_chinese(pinyinfile, markingfile):
   chinese_id_to_pinyin_id = dict((chinese_to_id[k], pinyin_to_id[v]) for k, v in chinese_to_pinyin.items())
   return pinyin_to_id, chinese_to_id, chinese_id_to_pinyin_id, len(pinyin_to_id), len(chinese_to_id)
 
-pinyin_to_id, chinese_to_id, chinese_id_to_pinyin_id, piyin_size, chinese_size = _build_vocab_chinese('/Users/plutoshe/PlutoShe/Program/golang/src/github.com/plutoshe/tensorflow/tensorflow/models/rnn/ptb/pinyin.dat', '/Users/plutoshe/PlutoShe/Program/golang/src/github.com/plutoshe/tensorflow/tensorflow/models/rnn/ptb/marking.dat')
+pinyin_to_id, chinese_to_id, chinese_id_to_pinyin_id, piyin_size, chinese_size = _build_vocab_chinese('/home/plutoshe/work/tensorflow/tensorflow/models/rnn/ptb/pinyin.dat', '/home/plutoshe/work/tensorflow/tensorflow/models/rnn/ptb/marking.dat')
 
 def _read_words1(filename):
   with tf.gfile.GFile(filename, "r") as f:

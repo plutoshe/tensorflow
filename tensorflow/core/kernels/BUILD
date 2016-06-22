@@ -701,6 +701,19 @@ tf_kernel_library(
     ],
 )
 
+tf_kernel_library(
+    name = "user_ops",
+    #prefix = "user_op",
+    srcs = ["user_ops.cc"],
+    hdrs = ["user_ops.h"],
+    gpu_srcs = ["user_ops.cu.cc", "user_ops.h"],
+    deps = [
+        "//tensorflow/core:framework",
+        "//tensorflow/core:lib",
+        "//tensorflow/core:user_ops_op_lib",
+    ],
+)
+
 tf_kernel_libraries(
     name = "image",
     prefixes = [
