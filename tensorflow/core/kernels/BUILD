@@ -703,10 +703,10 @@ tf_kernel_library(
 
 tf_kernel_library(
     name = "user_ops",
-    #prefix = "user_op",
+    #prefix = "user_ops",
     srcs = ["user_ops.cc"],
     hdrs = ["user_ops.h"],
-    gpu_srcs = ["user_ops.cu.cc", "user_ops.h"],
+    gpu_srcs = ["user_ops.h", "user_ops.cu.cc"],
     deps = [
         "//tensorflow/core:framework",
         "//tensorflow/core:lib",

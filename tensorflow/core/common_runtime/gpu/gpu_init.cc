@@ -65,6 +65,7 @@ Status EnablePeerAccess(gpu::Platform* platform, int device_count) {
 }
 
 static void InitGPU() {
+  LOG(INFO) << "Initializing GPU....";
   auto result = gpu::MultiPlatformManager::PlatformWithName("CUDA");
   if (!result.ok()) {
     LOG(WARNING)

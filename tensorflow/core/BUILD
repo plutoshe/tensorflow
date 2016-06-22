@@ -356,7 +356,8 @@ cc_library(
     name = "user_ops_op_lib",
     srcs = glob([
       "user_ops/**/*.cc", 
-    ], exclude = ["user_ops/**/*.cu.cc"]),
+    ]),
+    #, exclude = ["user_ops/**/*.cu.cc"]),
     #gpu_srcs = glob(["user_ops/gpu/**/*.cu.cc"]),
     copts = tf_copts(),
     visibility = ["//visibility:public"],
@@ -364,7 +365,7 @@ cc_library(
       "//tensorflow/core:framework",
     ],
     alwayslink = 1,
-    #linkstatic = 1,
+    linkstatic = 1,
 )
 
 
@@ -514,6 +515,7 @@ cc_library(
         "//tensorflow/core/kernels:training_ops",
         "//tensorflow/models/embedding:word2vec_kernels",
         "//tensorflow/core/kernels:user_ops",
+        "//tensorflow/core/kernels:user_ops_gpu",
     ],
 )
 

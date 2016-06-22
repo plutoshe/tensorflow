@@ -322,6 +322,7 @@ REGISTER_MODULE_INITIALIZER(register_curand, {
   }
 
   // Prime the cuRAND DSO. The loader will log more information.
+  LOG(INFO) << "invode status check";
   auto statusor = gpu::internal::CachedDsoLoader::GetCurandDsoHandle();
   if (!statusor.ok()) {
     LOG(INFO) << "Unable to load cuRAND DSO.";

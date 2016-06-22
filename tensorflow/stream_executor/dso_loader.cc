@@ -41,7 +41,7 @@ namespace internal {
 // TensorFlow OSS configure uses the following lines to configure versions. For
 // any modifications of the format, please make sure the script still works.
 string GetCudaVersion() { return "7.5"; }
-string GetCudnnVersion() { return ""; }
+string GetCudnnVersion() { return "4.0.7"; }
 
 /* static */ port::Status DsoLoader::GetCublasDsoHandle(void** dso_handle) {
   return GetDsoHandle(FindDsoPath(tensorflow::internal::FormatLibraryFileName("cublas", GetCudaVersion()),
@@ -97,6 +97,7 @@ string GetCudnnVersion() { return ""; }
   int dynload_flags =
       RTLD_LAZY | (load_kind == LoadKind::kLocal ? RTLD_LOCAL : RTLD_GLOBAL);
   string path_string = path.ToString();
+  LOG(INFO) << path_string.c_str() << " " << dynload_flags << " " <<  path << " " << "LD_LIBRARY_PATH: " << getenv("LD_LIBRARY_PATH");
   *dso_handle = dlopen(path_string.c_str(), dynload_flags);
   if (*dso_handle == nullptr) {
     LOG(INFO) << "Couldn't open CUDA library " << path
