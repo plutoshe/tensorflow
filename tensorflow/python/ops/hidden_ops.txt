@@ -231,6 +231,7 @@ Lookahead
 Lookaheadgpu
 Lookaheadgrad
 Lookaheadgradgpu
+WarpCtcLoss
 
 # training_ops
 # (None)
