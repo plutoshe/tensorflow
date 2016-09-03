@@ -1,0 +1,5 @@
+<resources>
+    <string name="app_name">AndroidRNN</string>
+    <string name="edit_message">Input String</string>
+    <string name="button_send">Predict</string>
+</resources>

@@ -1,0 +1,5 @@
+model_train/*.pb
+model_train/*.txt
+model_train/trained_backup
+model_train/simple-examples.tgz
+model_train/simple-examples/*
