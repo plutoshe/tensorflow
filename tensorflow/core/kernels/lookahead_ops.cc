@@ -1,10 +1,9 @@
-
 #include "tensorflow/core/kernels/lookahead_ops.h"
 #include <memory>
 #include <string>
 #include <utility>
 
-#include "third_party/eigen3/unsupported/Eigen/CXX11/Tensor"
+//#include "third_party/eigen3/unsupported/Eigen/CXX11/Tensor"
 #include "tensorflow/core/framework/op.h"
 #include "tensorflow/core/framework/op_kernel.h"
 #include "tensorflow/core/framework/register_types.h"
@@ -14,6 +13,9 @@
 #include "tensorflow/core/framework/types.h"
 #include "tensorflow/core/platform/logging.h"
 #include "tensorflow/core/platform/types.h"
+#include "tensorflow/core/framework/op.h"
+#include "tensorflow/core/framework/op_kernel.h"
+
 using namespace tensorflow;
 
 template<typename T>
@@ -56,4 +58,10 @@ class LookaheadOp<T, 0> : public OpKernel {
   }
 };
 REGISTER_KERNEL_BUILDER(Name("Lookahead").Device(DEVICE_CPU), LookaheadOp<float, 0>);
+
+REGISTER_OP("Lookahead")
+  .Attr("T: type")
+  .Input("input: T")
+  .Input("filter: T")
+  .Output("output: T");
 

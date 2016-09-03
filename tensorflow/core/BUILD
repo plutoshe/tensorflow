@@ -331,7 +331,7 @@ tf_gen_op_libs(
 cc_library(
     name = "user_ops_op_lib",
     srcs = glob([
-      "user_ops/**/*.cc", 
+      "user_ops/**/*.cc",
     ]),
     #, exclude = ["user_ops/**/*.cu.cc"]),
     #gpu_srcs = glob(["user_ops/gpu/**/*.cu.cc"]),
@@ -698,6 +698,7 @@ cc_library(
 
 # Full TensorFlow library with operator support. Use this unless reducing
 # binary size (by packaging a reduced operator set) is a concern.
+
 cc_library(
     name = "android_tensorflow_lib",
     srcs = if_android([":android_op_registrations_and_gradients"]),

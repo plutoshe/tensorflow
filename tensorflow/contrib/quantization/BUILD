@@ -18,7 +18,7 @@ cc_library(
     srcs = ["ops/array_ops.cc"],
     linkstatic = 1,
     deps = [
-        "//tensorflow/core:framework",
+        "//tensorflow/core:android_tensorflow_lib",
     ],
     alwayslink = 1,
 )
@@ -28,7 +28,7 @@ cc_library(
     srcs = ["ops/math_ops.cc"],
     linkstatic = 1,
     deps = [
-        "//tensorflow/core:framework",
+        "//tensorflow/core:android_tensorflow_lib",
     ],
     alwayslink = 1,
 )
@@ -38,7 +38,7 @@ cc_library(
     srcs = ["ops/nn_ops.cc"],
     linkstatic = 1,
     deps = [
-        "//tensorflow/core:framework",
+        "//tensorflow/core:android_tensorflow_lib",
     ],
     alwayslink = 1,
 )

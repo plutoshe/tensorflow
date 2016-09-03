@@ -874,7 +874,7 @@ tf_kernel_library(
         "//tensorflow/core:framework",
         "//tensorflow/core:lib",
         "//tensorflow/core:user_ops_op_lib",
-        "//tensorflow/core/kernels/warp-ctc/tests:warpctc",        
+        "//tensorflow/core/kernels/warp-ctc/tests:warpctc",
     ],
 )
 
@@ -1964,6 +1964,9 @@ filegroup(
         "unpack_op.cc",
         "variable_ops.cc",
         "variable_ops.h",
+        "lookahead_ops.cc",
+        "lookahead_ops.h",
+
     ],
 )
 
