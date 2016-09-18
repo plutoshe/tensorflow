@@ -215,6 +215,25 @@ cc_binary(
     ],
 )
 
+cc_binary(
+    name = "speech_test",
+    srcs = glob(["speech/*.cc"]),
+    copts = tf_copts(),
+    linkopts = [
+        "-lpthread",
+        "-lm",
+    ],
+    deps = [
+        ":cc_ops",
+        "//tensorflow/core:all_kernels",
+        "//tensorflow/core:core_cpu",
+        "//tensorflow/core:framework",
+        "//tensorflow/core:lib",
+        "//tensorflow/core:protos_all_cc",
+        "//tensorflow/core:tensorflow",
+    ],
+)
+
 filegroup(
     name = "all_files",
     srcs = glob(
