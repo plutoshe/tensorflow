@@ -23,8 +23,8 @@ using shape_inference::InferenceContext;
 using shape_inference::ShapeHandle;
 
 REGISTER_OP("OctbitMatMul")
-    .Input("input_a: qint8")
-    .Input("input_b: T")
+    .Input("input_a: T")
+    .Input("input_b: qint8")
     .Attr("transpose_a: bool = false")
     .Attr("transpose_b: bool = true")
     .Attr("scale: float = 0.0")

@@ -43,7 +43,7 @@ std::string __m128i_toString(const __m128i var) {
 }
 
 /**
- * Octbit Matmul takes const weight matrix (qint8) as first input, and float as second
+ * Octbit Matmul takes float matrix as the first input, and const weight matrix (qint8) as second input, and float as second
  * input, returns float out for now. This way, we can swap out MatMul only as it is most
  * expensive operator.
  */
@@ -63,47 +63,39 @@ class OctbitMatMulOp : public OpKernel {
   }
 
   void Compute(OpKernelContext* context) override {
-    const Tensor& a = context->input(0);
-    const Tensor& b = context->input(1);
+    const Tensor& x = context->input(0);
+    const Tensor& w = context->input(1);
 
     // This is used to handled bias part on in computing
     auto biasvec = bias.vec<T>();
-    auto mat = a.flat<qint8>().data();
+    auto mat = w.flat<qint8>().data();
     OP_REQUIRES(context, uint64(mat) % 32 == 0,
                 errors::InvalidArgument("a" + uint64(mat)));
 
     // first we cast the input 1 into unit8 some how. we assume the second input is
     // BxH where B is batch size, and H is hidden size (i.e. transposed).
     OP_REQUIRES(
-        context, a.dim_size(1) == b.dim_size(1),
+        context, x.dim_size(1) == w.dim_size(1),
         errors::InvalidArgument("f is not equal in filter and input"));
 
     OP_REQUIRES(
-        context, a.dim_size(1) % 64 == 0,
+        context, x.dim_size(1) % 64 == 0,
         errors::InvalidArgument("we need to be 16 aligned."));
 
     // Check that the dimensions of the two matrices are valid.
-    OP_REQUIRES(context, TensorShapeUtils::IsMatrix(a.shape()),
+    OP_REQUIRES(context, TensorShapeUtils::IsMatrix(x.shape()),
                 errors::InvalidArgument("In[0] is not a matrix"));
-    OP_REQUIRES(context, TensorShapeUtils::IsMatrix(b.shape()),
+    OP_REQUIRES(context, TensorShapeUtils::IsMatrix(w.shape()),
                 errors::InvalidArgument("In[1] is not a matrix"));
 
     Eigen::array<Eigen::IndexPair<Eigen::DenseIndex>, 1> dim_pair;
-    dim_pair[0].first = transpose_a_ ? 0 : 1;
-    dim_pair[0].second = transpose_b_ ? 1 : 0;
+    dim_pair[0].first = transpose_a_ ? 0 : 1;   // value is 1
+    dim_pair[0].second = transpose_b_ ? 1 : 0;   // value is 1
 
-
-    OP_REQUIRES(context,
-                a.dim_size(dim_pair[0].first) == b.dim_size(dim_pair[0].second),
-                errors::InvalidArgument("Matrix size-compatible: In[0]: ",
-                                        a.shape().DebugString(), ", In[1]: ",
-                                        b.shape().DebugString()));
-
-
-    int a_dim_remaining = 1 - dim_pair[0].first;
-    int b_dim_remaining = 1 - dim_pair[0].second;
+    int x_dim_remaining = 1 - dim_pair[0].first;
+    int w_dim_remaining = 1 - dim_pair[0].second;
     TensorShape out_shape(
-        {b.dim_size(b_dim_remaining), a.dim_size(a_dim_remaining)});
+        {x.dim_size(x_dim_remaining), w.dim_size(w_dim_remaining)});
 
     Tensor* c = nullptr;
     OP_REQUIRES_OK(context, context->allocate_output(0, out_shape, &c));
@@ -112,11 +104,11 @@ class OctbitMatMulOp : public OpKernel {
     auto output = c->matrix<T>();
 
     // first figure out the min/max value.
-    auto bmat = b.matrix<T>();
+    auto bmat = x.matrix<T>();
     float min_value = std::numeric_limits<T>::max();
     float max_value = std::numeric_limits<T>::lowest();
-    for (int i = 0; i < b.dim_size(0); i++) {
-      for (int j = 0; j < b.dim_size(1); j++) {
+    for (int i = 0; i < x.dim_size(0); i++) {
+      for (int j = 0; j < x.dim_size(1); j++) {
         if (bmat(i, j) < min_value) min_value = bmat(i, j);
         if (bmat(i, j) > max_value) max_value = bmat(i, j);
       }
@@ -124,24 +116,24 @@ class OctbitMatMulOp : public OpKernel {
 
     bool signed_flag = (min_value < 0);
     uint8* vec;
-    posix_memalign((void**)&vec, 32,  b.dim_size(0) * b.dim_size(1) * sizeof(uint8));
+    posix_memalign((void**)&vec, 32,  x.dim_size(0) * x.dim_size(1) * sizeof(uint8));
     float scale = scale_;
     if (min_value < 0) {
       // assign b to [0, 254]
       T bscale = std::max(-min_value, max_value)/254;
       scale *= bscale;
-      for (int i = 0; i < b.dim_size(0); i++) {
-        int base = i * b.dim_size(1);
-        for (int j = 0; j < b.dim_size(1); j++) {
+      for (int i = 0; i < x.dim_size(0); i++) {
+        int base = i * x.dim_size(1);
+        for (int j = 0; j < x.dim_size(1); j++) {
           vec[base + j] = (quint8)(round(bmat(i, j)/bscale) + 127);
         }
       }
     } else {
       T bscale = max_value/254;
       scale *= bscale;
-      for (int i = 0; i < b.dim_size(0); i++) {
-        int base = i * b.dim_size(1);
-        for (int j = 0; j < b.dim_size(1); j++) {
+      for (int i = 0; i < x.dim_size(0); i++) {
+        int base = i * x.dim_size(1);
+        for (int j = 0; j < x.dim_size(1); j++) {
           vec[base + j] = (quint8)round(bmat(i, j)/bscale);
         }
       }
@@ -155,13 +147,13 @@ class OctbitMatMulOp : public OpKernel {
     }
 
     // now it is time to compute
-    int A = c->dim_size(1);
-    int B = c->dim_size(0);
-    int N = b.dim_size(1);
-    for (int i = 0; i < A; ++i) {
-      int abase = i * N;
-      for (int batch = 0; batch < B; ++batch) {
-        int bbase = batch * N;
+    int A = x.dim_size(0);
+    int B = w.dim_size(0);
+    int N = x.dim_size(1);
+    for (int i = 0; i < B; ++i) {
+      int wbase = i * N;
+      for (int batch = 0; batch < A; ++batch) {
+        int xbase = batch * N;
         __m128i sum;
         sum[0] = 0;
         sum[1] = 0;
@@ -169,8 +161,8 @@ class OctbitMatMulOp : public OpKernel {
         sum[3] = 0;
         __m128i c, lo, hi;
         for (int j = 0; j < N/16; j += 4) {
-          __m128i* b = (__m128i*) (mat + abase + j*16);
-          __m128i* a = (__m128i*) (vec + bbase + j*16);
+          __m128i* a = (__m128i*) (vec + xbase + j*16);
+          __m128i* b = (__m128i*) (mat + wbase + j*16);
 
           c = _mm_maddubs_epi16(a[0], b[0]);
           lo = _mm_cvtepi16_epi32(c);
