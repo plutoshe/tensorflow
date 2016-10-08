@@ -20,7 +20,7 @@ from __future__ import print_function
 
 import numpy as np
 import tensorflow as tf
-from tensorflow.contrib.naturali.python.ops import warpctc_ops
+from tensorflow.contrib.warpctc.python.ops import warpctc_ops
 
 
 def SimpleSparseTensorFrom(x):

@@ -44,3 +44,4 @@ from tensorflow.contrib import testing
 from tensorflow.contrib import training
 from tensorflow.contrib import util
 from tensorflow.contrib import naturali
+from tensorflow.contrib import warpctc

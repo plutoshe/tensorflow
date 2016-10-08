@@ -24,7 +24,6 @@ py_library(
     srcs = ["__init__.py"] + glob(["python/ops/*.py"]),
     data = [
         ":python/ops/_lookahead_ops.so",
-        ":python/ops/_warpctc_ops.so",
     ],
     srcs_version = "PY2AND3",
     visibility = ["//visibility:public"],
@@ -47,35 +46,6 @@ tf_custom_op_library(
     ],
     deps = [
         "//tensorflow/core/kernels:eigen_helpers",
-    ],
-)
-
-tf_custom_op_library(
-    name = "python/ops/_warpctc_ops.so",
-    srcs = [
-        "kernels/warpctc_ops.cc",
-        "kernels/warpctc_ops.h",
-        "ops/warpctc_ops.cc",
-    ],
-    gpu_srcs = [
-        "kernels/warpctc_ops.cu.cc",
-        "kernels/warpctc_ops.h",
-    ],
-    deps = [
-        "//tensorflow/core/kernels:eigen_helpers",
-	"//tensorflow/contrib/naturali/kernels/warp-ctc/tests:warpctc", 
-    ],
-)
-
-cuda_py_tests(
-    name = "warpctc_ops_test",
-    size = "small",
-    srcs = ["python/kernel_tests/warpctc_ops_test.py"],
-    additional_deps = [
-        ":naturali_py",
-        "//tensorflow:tensorflow_py",
-        "//tensorflow/python:framework_test_lib",
-        "//tensorflow/python:platform_test",
     ],
 )
 
