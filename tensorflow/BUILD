@@ -125,6 +125,7 @@ filegroup(
         "//tensorflow/contrib/quantization/tools:all_files",
         "//tensorflow/contrib/rnn:all_files",
         "//tensorflow/contrib/naturali:all_files",
+        "//tensorflow/contrib/warpctc:all_files",
         "//tensorflow/contrib/session_bundle:all_files",
         "//tensorflow/contrib/session_bundle/example:all_files",
         "//tensorflow/contrib/slim:all_files",
