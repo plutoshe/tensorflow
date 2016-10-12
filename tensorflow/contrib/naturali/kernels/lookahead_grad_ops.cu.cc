@@ -1,5 +1,14 @@
 #define EIGEN_USE_THREADS
-#include "tensorflow/contrib/naturali/kernels/lookahead_grad_ops.h"
+#define EIGEN_USE_GPU
+
+
+
+#include "tensorflow/core/framework/op.h"
+#include "tensorflow/core/framework/op_kernel.h"
+#include "tensorflow/core/framework/numeric_op.h"
+#include "tensorflow/core/framework/tensor_types.h"
+#include "third_party/eigen3/unsupported/Eigen/CXX11/Tensor"
+
 #include <cuda_runtime.h>
 
 using namespace tensorflow;
@@ -37,9 +46,9 @@ __global__ void kernel_grad_filter(int dim_batch, int dim_timestep, const T* inp
 }
 
 template<typename T>
-class LookaheadGradOp<T, 1> : public OpKernel {
+class LookaheadGradGpuOp : public OpKernel {
  public:
-  explicit LookaheadGradOp(OpKernelConstruction* context) : OpKernel(context) {
+  explicit LookaheadGradGpuOp(OpKernelConstruction* context) : OpKernel(context) {
     const DataType dt = DataTypeToEnum<T>::v();
     OP_REQUIRES_OK(context, context->MatchSignature({dt, dt, dt}, {dt, dt}));
   }
@@ -89,5 +98,5 @@ class LookaheadGradOp<T, 1> : public OpKernel {
   }
 };
 
-REGISTER_KERNEL_BUILDER(Name("Lookaheadgrad").Device(DEVICE_GPU).TypeConstraint<float>("T"), LookaheadGradOp<float, 1>);
+REGISTER_KERNEL_BUILDER(Name("Lookaheadgrad").Device(DEVICE_GPU), LookaheadGradGpuOp<float>);
 

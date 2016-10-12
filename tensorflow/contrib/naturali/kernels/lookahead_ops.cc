@@ -1,5 +1,7 @@
+// Copyright by Naturali. 2016
+// Author Xibai, Pluto, Sean
+// All rights reserved.
 
-#include "tensorflow/contrib/naturali/kernels/lookahead_ops.h"
 #include <memory>
 #include <string>
 #include <utility>
@@ -17,9 +19,9 @@
 using namespace tensorflow;
 
 template<typename T>
-class LookaheadOp<T, 0> : public OpKernel {
+class LookaheadCpuOp : public OpKernel {
  public:
-  explicit LookaheadOp(OpKernelConstruction* context) : OpKernel(context) {
+  explicit LookaheadCpuOp(OpKernelConstruction* context) : OpKernel(context) {
     const DataType dt = DataTypeToEnum<T>::v();
     OP_REQUIRES_OK(context, context->MatchSignature({dt, dt}, {dt}));
   }
@@ -47,7 +49,9 @@ class LookaheadOp<T, 0> : public OpKernel {
       for (int batch = 0; batch < input_tensor.dim_size(1); batch++) {
         for (int feature = 0; feature < input_tensor.dim_size(2); feature++) {
           output(timestep, batch, feature) = 0;
-          for(int tau = 0; tau < filter_tensor.dim_size(0) && timestep + tau < input_tensor.dim_size(0); tau++) {
+        }
+        for(int tau = 0; tau < filter_tensor.dim_size(0) && timestep + tau < input_tensor.dim_size(0); tau++) {
+          for (int feature = 0; feature < input_tensor.dim_size(2); feature++) {
             output(timestep, batch, feature) += input(timestep + tau, batch, feature) * filter(tau, feature);
           }
         }
@@ -55,5 +59,5 @@ class LookaheadOp<T, 0> : public OpKernel {
     }
   }
 };
-REGISTER_KERNEL_BUILDER(Name("Lookahead").Device(DEVICE_CPU), LookaheadOp<float, 0>);
+REGISTER_KERNEL_BUILDER(Name("Lookahead").Device(DEVICE_CPU), LookaheadCpuOp<float>);
 

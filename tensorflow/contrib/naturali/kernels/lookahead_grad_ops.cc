@@ -1,11 +1,15 @@
-#include "tensorflow/contrib/naturali/kernels/lookahead_grad_ops.h"
+#include "tensorflow/core/framework/op.h"
+#include "tensorflow/core/framework/op_kernel.h"
+#include "tensorflow/core/framework/numeric_op.h"
+#include "tensorflow/core/framework/tensor_types.h"
+#include "third_party/eigen3/unsupported/Eigen/CXX11/Tensor"
 
 using namespace tensorflow;
 
 template<typename T>
-class LookaheadGradOp<T, 0> : public OpKernel {
+class LookaheadGradCpuOp : public OpKernel {
  public:
-  explicit LookaheadGradOp(OpKernelConstruction* context) : OpKernel(context) {
+  explicit LookaheadGradCpuOp(OpKernelConstruction* context) : OpKernel(context) {
     const DataType dt = DataTypeToEnum<T>::v();
     OP_REQUIRES_OK(context, context->MatchSignature({dt, dt, dt}, {dt, dt}));
   }
@@ -73,5 +77,5 @@ class LookaheadGradOp<T, 0> : public OpKernel {
   }
 };
 
-REGISTER_KERNEL_BUILDER(Name("Lookaheadgrad").Device(DEVICE_CPU), LookaheadGradOp<float, 0>);
+REGISTER_KERNEL_BUILDER(Name("Lookaheadgrad").Device(DEVICE_CPU), LookaheadGradCpuOp<float>);
 

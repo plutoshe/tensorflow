@@ -1,5 +1,5 @@
 #define EIGEN_USE_THREADS
-#include "tensorflow/contrib/naturali/kernels/lookahead_ops.h"
+#define EIGEN_USE_GPU
 
 #include <memory>
 #include <string>
@@ -33,9 +33,9 @@ __global__ void kernel(int dim_tau, const T* input, const T* filter, T* output) 
   }
 }
 template<typename T>
-class LookaheadOp<T, 1> : public OpKernel {
+class LookaheadGpuOp : public OpKernel {
  public:
-  explicit LookaheadOp(OpKernelConstruction* context) : OpKernel(context) {
+  explicit LookaheadGpuOp(OpKernelConstruction* context) : OpKernel(context) {
     const DataType dt = DataTypeToEnum<T>::v();
     OP_REQUIRES_OK(context, context->MatchSignature({dt, dt}, {dt}));
   }
@@ -68,4 +68,4 @@ class LookaheadOp<T, 1> : public OpKernel {
   }
 };
 
-REGISTER_KERNEL_BUILDER(Name("Lookahead").Device(DEVICE_GPU).TypeConstraint<float>("T"), LookaheadOp<float, 1>);
+REGISTER_KERNEL_BUILDER(Name("Lookahead").Device(DEVICE_GPU), LookaheadGpuOp<float>);
