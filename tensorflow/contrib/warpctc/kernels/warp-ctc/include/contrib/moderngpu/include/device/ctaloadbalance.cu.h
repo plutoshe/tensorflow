@@ -34,8 +34,8 @@
 
 #pragma once
 
-#include "ctasearch.cuh"
-#include "loadstore.cuh"
+#include "ctasearch.cu.h"
+#include "loadstore.cu.h"
 
 namespace mgpu {
 

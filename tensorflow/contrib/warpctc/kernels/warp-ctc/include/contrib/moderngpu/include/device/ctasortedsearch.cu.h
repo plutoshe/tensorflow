@@ -34,8 +34,8 @@
 
 #pragma once
 
-#include "../mgpudevice.cuh"
-#include "ctasearch.cuh"
+#include "../mgpudevice.cu.h"
+#include "ctasearch.cu.h"
 
 namespace mgpu {
 

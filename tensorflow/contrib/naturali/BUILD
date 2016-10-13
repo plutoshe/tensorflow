@@ -33,9 +33,7 @@ tf_custom_op_library(
     name = "python/ops/_lookahead_ops.so",
     srcs = [
         "kernels/lookahead_ops.cc",
-        "kernels/lookahead_ops.h",
         "kernels/lookahead_grad_ops.cc",
-        "kernels/lookahead_grad_ops.h",
         "ops/lookahead_ops.cc",
     ],
     gpu_srcs = [
