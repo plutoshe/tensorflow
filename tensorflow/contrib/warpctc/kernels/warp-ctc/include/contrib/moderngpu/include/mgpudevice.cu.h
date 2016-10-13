@@ -35,12 +35,12 @@
 #pragma once
 
 #include "mgpuenums.h"
-#include "device/deviceutil.cuh"
+#include "device/deviceutil.cu.h"
 
 namespace mgpu {
 
 ////////////////////////////////////////////////////////////////////////////////
-// device/loadstore.cuh
+// device/loadstore.cu.h
 
 // For 0 <= i < VT:
 //		index = NT * i + tid;
@@ -285,5 +285,5 @@ MGPU_DEVICE void DeviceTransferMergeValuesShared(int count, const T* a_global,
 } // namespace mgpu
 
 
-#include "device/loadstore.cuh"
-#include "device/ctasegscan.cuh"
+#include "device/loadstore.cu.h"
+#include "device/ctasegscan.cu.h"

@@ -35,8 +35,8 @@
 #pragma once
 
 #include "../mgpuenums.h"
-#include "deviceutil.cuh"
-#include "intrinsics.cuh"
+#include "deviceutil.cu.h"
+#include "intrinsics.cu.h"
 
 namespace mgpu {
 

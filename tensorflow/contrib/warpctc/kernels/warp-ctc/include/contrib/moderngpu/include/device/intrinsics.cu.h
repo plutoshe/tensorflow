@@ -32,7 +32,7 @@
  *
  ******************************************************************************/
 
-#include "devicetypes.cuh"
+#include "devicetypes.cu.h"
 
 #pragma once
 
