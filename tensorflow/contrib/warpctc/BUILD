@@ -39,12 +39,13 @@ tf_custom_op_library(
     srcs = [
         "kernels/warpctc_ops.cc",
         "ops/warpctc_ops.cc",
-        "kernels/warp-ctc/src/ctc_entrypoint.cpp",
+#        "kernels/warp-ctc/src/ctc_entrypoint.cpp",
     ],
     gpu_srcs = [
         "kernels/warpctc_ops.cu.cc",
         "kernels/warpctc_ops.h",
         "kernels/warp-ctc/include/ctc.h",
+        "kernels/warp-ctc/src/ctc_entrypoint.cu.cc",
         "kernels/warp-ctc/src/reduce.cu.cc",
         "kernels/warp-ctc/tests/test.h",
     ], 
