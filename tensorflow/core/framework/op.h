@@ -302,3 +302,4 @@ struct OpDefBuilderReceiver {
 }  // namespace tensorflow
 
 #endif  // TENSORFLOW_FRAMEWORK_OP_H_
+
