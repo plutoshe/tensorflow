@@ -99,6 +99,7 @@ tf_custom_op_library(
         "quantized_conv_ops.cc",
         "quantized_matmul_op.cc",
         "quantized_pooling_ops.cc",
+        "octbit_mat_mul.cc",
         "reference_gemm.h",
     ],
     deps = [

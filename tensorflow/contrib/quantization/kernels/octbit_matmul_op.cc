@@ -205,6 +205,7 @@ class OctbitMatMulOp : public OpKernel {
 };
 
 REGISTER_KERNEL_BUILDER(Name("OctbitMatMul").Device(DEVICE_CPU), OctbitMatMulOp<float>);
+REGISTER_KERNEL_BUILDER(Name("OctbitMatMul").Device(DEVICE_GPU), OctbitMatMulOp<float>);
 }  // namespace tensorflow
 
 
