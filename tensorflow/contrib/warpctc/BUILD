@@ -38,8 +38,7 @@ tf_custom_op_library(
     name = "python/ops/_warpctc_ops.so",
     srcs = [
         "kernels/warpctc_ops.cc",
-        "kernels/warpctc_ops.h",
-	"kernels/warp-ctc/include/ctc.h",
+    	"kernels/warp-ctc/include/ctc.h",
         "ops/warpctc_ops.cc",
         "kernels/warp-ctc/tests/test.h",
     ],
