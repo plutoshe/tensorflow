@@ -124,7 +124,7 @@ class CpuCTCWorkspace {
   void reset(int L, int S, int T, const int* const labels) {
     std::fill(alphas, alphas + S * T, ctc_helper::neg_inf<ProbT>());
     std::fill(betas, betas + S, ctc_helper::neg_inf<ProbT>());
-    repeats = setup_labels(labels, L, S, alphabet_size - 1);
+    repeats = setup_labels(labels, L, S, 0);
   }
 
   ProbT* alphas;
@@ -252,14 +252,14 @@ class CpuCTC {
 
     Accessor2D<ProbT> alphas(alphabet_size_, ctcm.alphas);
     Accessor3D<ProbT> yprobs(minibatch_, alphabet_size_, probs);
-
-    int start =  0;
+    int start = (((S /2) + repeats - T) < 0) ? 0 : 1;
     int end = S > 1 ? 2 : 1;
 
     // Setup the boundary condition.
-    alphas(0, 0) = std::log(yprobs(0, mb, labels[0]));  // should be blank
-    alphas(0, 1) = std::log(yprobs(0, mb, labels[1]));  // first payload
 
+    for (int i = start; i < end; ++i) {
+        alphas(0, i) = std::log(yprobs(0, mb, labels[i]));
+    }
     for(int t = 1; t < T; ++t) {
       // Still a bit murky here.
       int remain = (S / 2) + repeats - (T - t);
@@ -273,12 +273,11 @@ class CpuCTC {
       }
 
       for(int i = startloop; i < end; ++i) {
-        ProbT prev_sum = log_add(alphas(t - 1, i), alphas(t, i - 1));
+        ProbT prev_sum = log_add(alphas(t - 1, i), alphas(t - 1, i - 1));
 
         // Skip two if not on blank and not on repeat.
         if (allow_skip_blank && labels[i] != blank_ && i >= 2 && labels[i] != labels[i-2])
           prev_sum = log_add(prev_sum, alphas(t - 1, i - 2));
-
         alphas(t, i) = prev_sum + std::log(yprobs(t, mb, labels[i]));
       }
     }
@@ -424,6 +423,7 @@ class CpuWarpCTCLossOp : public OpKernel {
     const int64 max_time = inputs_shape.dim_size(0);
     const int64 batch_size = inputs_shape.dim_size(1);
     const int64 num_classes = inputs_shape.dim_size(2);
+    const int alphabet_size = num_classes;
 
     TensorShape labels_shape({batch_size, max_time});
     std::vector<int64> order{0, 1};
@@ -462,14 +462,15 @@ class CpuWarpCTCLossOp : public OpKernel {
     Tensor* gradient;
     OP_REQUIRES_OK(ctx, ctx->allocate_output("gradient", inputs_shape, &gradient));
     auto gradient_t = gradient->tensor<float, 3>();
-
-    CpuCTC<float> ctc(num_classes, seq_len_tensor.dim_size(0), activations,
+    CpuCTC<float> ctc(alphabet_size, seq_len_tensor.dim_size(0), activations,
                       labels.data(), label_lengths.data(),
                       seq_len.data(), loss_t.data(), gradient_t.data());
 
     ctc.cost_and_grad();
+
   }
 };
 
 REGISTER_KERNEL_BUILDER(Name("WarpCtcLoss").Device(DEVICE_CPU), CpuWarpCTCLossOp);
 }  // end namespace tensorflow
+
