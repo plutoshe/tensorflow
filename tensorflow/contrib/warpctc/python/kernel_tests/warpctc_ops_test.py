@@ -55,7 +55,7 @@ class CTCLossTest(tf.test.TestCase):
     with self.test_session(use_gpu=True) as sess:
       loss = warpctc_ops.warp_ctc_loss(inputs=inputs_t,
                                      labels=labels,
-                                     sequence_length=seq_lens)
+                                     sequence_length=seq_lens,                                     blank_index=0)
       grad = tf.gradients(loss, [inputs_t])[0]
 
       self.assertShapeEqual(loss_truth, loss)

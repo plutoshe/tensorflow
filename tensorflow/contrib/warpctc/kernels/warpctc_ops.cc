@@ -110,7 +110,7 @@ class CpuCTCWorkspace {
     delete[] output;
   }
 
-  CpuCTCWorkspace(int L, int S, int T, int a) : repeats(0), alphabet_size(a){
+  CpuCTCWorkspace(int L, int S, int T, int a, int blank_index) : repeats(0), alphabet_size(a){
     alphas = new ProbT[S*T];
     betas = new ProbT[S];
 
@@ -119,12 +119,14 @@ class CpuCTCWorkspace {
     s_inc = new int[S];
 
     output = new ProbT[alphabet_size];
+    blank_index = blank_index;
   }
 
-  void reset(int L, int S, int T, const int* const labels) {
+  void reset(int L, int S, int T, const int* const labels, int blank_index_) {
     std::fill(alphas, alphas + S * T, ctc_helper::neg_inf<ProbT>());
     std::fill(betas, betas + S, ctc_helper::neg_inf<ProbT>());
-    repeats = setup_labels(labels, L, S, 0);
+    blank_index = blank_index_;
+    repeats = setup_labels(labels, L, S, blank_index);
   }
 
   ProbT* alphas;
@@ -134,6 +136,7 @@ class CpuCTCWorkspace {
   int* s_inc;
   ProbT* output;
   int repeats;
+  int blank_index;
   const int alphabet_size;
 };
 
@@ -144,14 +147,15 @@ class CpuCTC {
     delete workspace_;
     delete[] probs;
   }
-
+  int blank_index;
   // Noncopyable
   CpuCTC(int alphabet_size, int minibatch,
          const ProbT* const pactivations,
          const int* const pflat_labels,
          const int* const plabel_lengths,
          const int* const pinput_lengths,
-         ProbT* pcosts, ProbT* pgradients) :
+         ProbT* pcosts, ProbT* pgradients,
+         const int blank_index_) :
     alphabet_size_(alphabet_size), blank_(alphabet_size-1),
     minibatch_(minibatch), workspace_(nullptr),
     activations(pactivations), flat_labels(pflat_labels), label_lengths(plabel_lengths),
@@ -160,8 +164,8 @@ class CpuCTC {
     int maxT = *std::max_element(input_lengths, input_lengths + minibatch_);
     int maxL = *std::max_element(label_lengths, label_lengths + minibatch_);;
     int maxS = 2 * maxL + 1;
-    workspace_ = new CpuCTCWorkspace<ProbT>(maxL, maxS, maxT, alphabet_size_);
-
+    blank_index = blank_index_;
+    workspace_ = new CpuCTCWorkspace<ProbT>(maxL, maxS, maxT, alphabet_size_, blank_index);
     // compute softmax, need to make sure the order is right: currently it is t x b x f
     probs = new ProbT[maxT * minibatch_ * alphabet_size_];
   };
@@ -223,7 +227,7 @@ class CpuCTC {
   cost_and_grad_kernel(const int* const labels, int T, int L, int mb) {
     const int S = 2*L + 1; // Number of labels with blanks
 
-    workspace_->reset(L, S, T, labels);
+    workspace_->reset(L, S, T, labels, blank_index);
     CpuCTCWorkspace<ProbT>& ctcm(*workspace_);
 
     bool over_threshold = false;
@@ -393,9 +397,11 @@ class CpuCTC {
 
 class CpuWarpCTCLossOp : public OpKernel {
  public:
+  int blank_index = -1;
   explicit CpuWarpCTCLossOp(OpKernelConstruction* ctx) : OpKernel(ctx) {
     bool p, c;
     OP_REQUIRES_OK(ctx, ctx->GetAttr("preprocess_collapse_repeated", &p));
+    OP_REQUIRES_OK(ctx, ctx->GetAttr("blank_index", &blank_index));
     OP_REQUIRES_OK(ctx, ctx->GetAttr("ctc_merge_repeated", &c));
   }
 
@@ -464,7 +470,7 @@ class CpuWarpCTCLossOp : public OpKernel {
     auto gradient_t = gradient->tensor<float, 3>();
     CpuCTC<float> ctc(alphabet_size, seq_len_tensor.dim_size(0), activations,
                       labels.data(), label_lengths.data(),
-                      seq_len.data(), loss_t.data(), gradient_t.data());
+                      seq_len.data(), loss_t.data(), gradient_t.data(), blank_index);
 
     ctc.cost_and_grad();
 
@@ -473,4 +479,5 @@ class CpuWarpCTCLossOp : public OpKernel {
 
 REGISTER_KERNEL_BUILDER(Name("WarpCtcLoss").Device(DEVICE_CPU), CpuWarpCTCLossOp);
 }  // end namespace tensorflow
+
 

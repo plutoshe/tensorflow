@@ -25,10 +25,11 @@ REGISTER_OP("WarpCtcLoss")
     .Input("sequence_length: int32")
     .Attr("preprocess_collapse_repeated: bool = false")
     .Attr("ctc_merge_repeated: bool = true")
+    .Attr("blank_index: int = 0")
     .Output("loss: float")
     .Output("gradient: float")
     .Doc(R"doc(
-Calculates the CTC Loss (log probability) for each batch entry.  Also calculates
+NIHAO,Calculates the CTC Loss (log probability) for each batch entry.  Also calculates
 the gradient.  This class performs the softmax operation for you, so inputs
 should be e.g. linear projections of outputs by an LSTM.
 
@@ -47,4 +48,5 @@ loss: A vector (batch) containing log-probabilities.
 gradient: The gradient of `loss`.  3-D, shape:
   `(max_time x batch_size x num_classes)`.
 )doc");
+
 
