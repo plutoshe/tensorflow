@@ -20,7 +20,7 @@ limitations under the License.
 #include "tensorflow/core/platform/macros.h"
 #include "tensorflow/core/util/sparse/sparse_tensor.h"
 
-#include "tensorflow/contrib/warpctc/kernels/warp-ctc/include/detail/ctc_helper.h"
+#include "tensorflow/contrib/warpctc/kernels/ctc_helper.h"
 
 namespace tensorflow {
 // Used for easy access to 3d tensor.

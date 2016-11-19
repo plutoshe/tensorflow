@@ -38,22 +38,16 @@ tf_custom_op_library(
     name = "python/ops/_warpctc_ops.so",
     srcs = [
         "kernels/warpctc_ops.cc",
-    	"kernels/warp-ctc/include/ctc.h",
+        "kernels/ctc_helper.h",
         "ops/warpctc_ops.cc",
-        "kernels/warp-ctc/tests/test.h",
     ],
     gpu_srcs = [
         "kernels/warpctc_ops.cu.cc",
-        "kernels/warp-ctc/include/ctc.h",
-        "kernels/warp-ctc/src/ctc_entrypoint.cu.cc",
-        "kernels/warp-ctc/src/reduce.cu.cc",
-        "kernels/warp-ctc/tests/test.h",
+        "kernels/gpu_ctc_kernels.h",
     ], 
     deps =
     [
-        "//tensorflow/contrib/warpctc/kernels/warp-ctc/include/detail:libcpu",
-        "//tensorflow/contrib/warpctc/kernels/warp-ctc/include/detail:libgpu",
-        "//tensorflow/contrib/warpctc/kernels/warp-ctc/include/contrib/moderngpu/include:lib_gpu",
+        "//tensorflow/contrib/warpctc/kernels/moderngpu/include:lib_gpu",
         "//tensorflow/core/kernels:eigen_helpers",
     ],
 )
