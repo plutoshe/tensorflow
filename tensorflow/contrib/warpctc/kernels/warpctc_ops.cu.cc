@@ -28,6 +28,9 @@ limitations under the License.
 #include "tensorflow/contrib/warpctc/kernels/gpu_ctc_kernels.h"
 
 namespace tensorflow {
+
+using namespace ctc_helper;
+
 template<typename T>
 class Gpu {
  public:
@@ -79,9 +82,6 @@ class Gpu {
     cudaFree(ptr);
   }
 };
-
-
-using namespace ctc_helper;
 
 const int warp_size = 32;
 
@@ -198,18 +198,28 @@ class GpuCTC {
                 const int* const flat_labels,
                 const int* const label_lengths,
                 const int* const input_lengths) {
-    return compute_cost_and_score(activations, grads, costs, flat_labels,
-                                  label_lengths, input_lengths, true, true);
-  }
 
-  ctcStatus_t
-  score_forward(const ProbT* const activations,
-                ProbT* costs,
-                const int* const flat_labels,
-                const int* const label_lengths,
-                const int* const input_lengths) {
-    return compute_cost_and_score(activations, nullptr, costs, flat_labels,
-                                  label_lengths, input_lengths, true, false);
+    size_t best_config;
+    ctcStatus_t status = choose_config(flat_labels, label_lengths,
+                                       input_lengths, best_config);
+    if (status != CTC_STATUS_SUCCESS)
+      return status;
+
+    status = compute_probs(activations);
+    if (status != CTC_STATUS_SUCCESS)
+      return status;
+
+    launch_gpu_kernels(probs_, grads, best_config, true, true);
+
+    cudaError_t cuda_status_mem, cuda_status_sync;
+    cuda_status_mem = cudaMemcpyAsync(costs, nll_forward_,
+                                      sizeof(ProbT) * minibatch_,
+                                      cudaMemcpyDeviceToHost, stream_);
+    cuda_status_sync = cudaStreamSynchronize(stream_);
+    if (cuda_status_mem != cudaSuccess || cuda_status_sync != cudaSuccess)
+      return CTC_STATUS_MEMOPS_FAILED;
+
+    return CTC_STATUS_SUCCESS;
   }
 
  private:
@@ -405,41 +415,6 @@ class GpuCTC {
     return CTC_STATUS_SUCCESS;
   }
 
-  ctcStatus_t
-  compute_cost_and_score(const ProbT* const activations,
-                         ProbT* grads,
-                         ProbT* costs,
-                         const int* const flat_labels,
-                         const int* const label_lengths,
-                         const int* const input_lengths,
-                         bool compute_alpha,
-                         bool compute_betas_and_grad) {
-
-    size_t best_config;
-    ctcStatus_t status = choose_config(flat_labels, label_lengths,
-                                       input_lengths, best_config);
-    if (status != CTC_STATUS_SUCCESS)
-      return status;
-
-    status = compute_probs(activations);
-    if (status != CTC_STATUS_SUCCESS)
-      return status;
-
-    launch_gpu_kernels(probs_, grads, best_config,
-                       compute_alpha, compute_betas_and_grad);
-
-    cudaError_t cuda_status_mem, cuda_status_sync;
-    cuda_status_mem = cudaMemcpyAsync(costs, nll_forward_,
-                                      sizeof(ProbT) * minibatch_,
-                                      cudaMemcpyDeviceToHost, stream_);
-    cuda_status_sync = cudaStreamSynchronize(stream_);
-    if (cuda_status_mem != cudaSuccess || cuda_status_sync != cudaSuccess)
-      return CTC_STATUS_MEMOPS_FAILED;
-
-    return CTC_STATUS_SUCCESS;
-  }
-
-
   int out_dim_; // Number of characters plus blank
   int minibatch_;
 
@@ -462,69 +437,6 @@ class GpuCTC {
   ProbT *denoms_ = nullptr; // Temporary storage for denoms for softmax
   ProbT *probs_ = nullptr; // Temporary storage for probabilities (softmax output)
 };
-
-
-ctcStatus_t compute_ctc_loss(const float* const activations,
-                             float* gradients,
-                             const int* const flat_labels,
-                             const int* const label_lengths,
-                             const int* const input_lengths,
-                             int alphabet_size,
-                             int minibatch,
-                             float *costs,
-                             void *workspace,
-                             cudaStream_t stream) {
-
-  GpuCTC<float> ctc(alphabet_size, minibatch, stream);
-
-  return ctc.cost_and_grad(activations, gradients, costs,
-                           flat_labels, label_lengths,
-                           input_lengths);
-
-}
-
-
-ctcStatus_t get_workspace_size(const int* const label_lengths,
-                               const int* const input_lengths,
-                               int alphabet_size, int minibatch,
-                               size_t* size_bytes) {
-  // This is the max of all S and T for all examples in the minibatch.
-  int maxL = *std::max_element(label_lengths, label_lengths + minibatch);
-  int maxT = *std::max_element(input_lengths, input_lengths + minibatch);
-
-  const int S = 2 * maxL + 1;
-
-  *size_bytes = 0;
-
-
-  //cpu can eventually replace all minibatch with
-  //max number of concurrent threads if memory is
-  //really tight
-
-  //per minibatch memory
-  size_t per_minibatch_bytes = 0;
-
-  //output
-  per_minibatch_bytes += sizeof(float) * alphabet_size ;
-
-  //alphas
-  per_minibatch_bytes += sizeof(float) * S * maxT;
-
-  //betas
-  per_minibatch_bytes += sizeof(float) * S;
-
-  //labels w/blanks, e_inc, s_inc
-  per_minibatch_bytes += 3 * sizeof(int) * S;
-
-  *size_bytes = per_minibatch_bytes * minibatch;
-
-  //probs
-  *size_bytes += sizeof(float) * alphabet_size * maxT * minibatch;
-
-
-  return CTC_STATUS_SUCCESS;
-}
-
 
 class GpuWarpCTCLossOp : public OpKernel {
  public:
@@ -580,14 +492,6 @@ class GpuWarpCTCLossOp : public OpKernel {
     cudaMemcpyAsync(lengths, seq_len.data(), size_of_lengths * sizeof(int), cudaMemcpyDeviceToHost, stream);
 
 
-    size_t gpu_alloc_bytes;
-    get_workspace_size(label_lengths.data(), lengths,
-                       alphabet_size, size_of_lengths,
-                       &gpu_alloc_bytes);
-
-    char *ctc_gpu_workspace;
-    cudaMalloc(&ctc_gpu_workspace, gpu_alloc_bytes);
-
     Tensor* loss = nullptr;
     OP_REQUIRES_OK(ctx, ctx->allocate_output("loss", seq_len_tensor.shape(), &loss));
     auto loss_t = loss->vec<float>();
@@ -598,19 +502,13 @@ class GpuWarpCTCLossOp : public OpKernel {
     auto gradient_t = gradient->tensor<float, 3>();
     float loss_cpu[size_of_lengths];
     cudaMemset(gradient_t.data(), 0, gradient->NumElements() * sizeof(float));
-    compute_ctc_loss(activations_gpu, gradient_t.data(),
-                     labels.data(), label_lengths.data(),
-                     lengths,
-                     alphabet_size,
-                     size_of_lengths,
-                     loss_cpu,
-                     ctc_gpu_workspace,
-                     stream);
+
+    GpuCTC<float> ctc(alphabet_size, size_of_lengths, stream);
+
+    ctc.cost_and_grad(activations_gpu, gradient_t.data(), loss_cpu,
+                      labels.data(), label_lengths.data(), lengths);
 
     cudaMemcpyAsync(loss_t.data(), loss_cpu, size_of_lengths * sizeof(float), cudaMemcpyHostToDevice, stream);
-
-    cudaFree(ctc_gpu_workspace);
-
   }
 };
 
