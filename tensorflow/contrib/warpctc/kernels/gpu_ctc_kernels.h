@@ -449,39 +449,3 @@ void compute_betas_and_grad_kernel (const ProbT* probs, const int *label_sizes,
         __syncthreads();
     }
 }
-
-template <typename ProbT, int VT = 1, typename Op>
-__global__ void compute_probs_kernel(Op f, ProbT* probs,
-                                     const ProbT* const denom,
-                                     int alphabet_size,
-                                     int count) {
-
-    int idx = blockDim.x * blockIdx.x + threadIdx.x;
-    int stride = blockDim.x * gridDim.x;
-#pragma unroll
-    for(int i = 0; i < VT; i++) {
-        if (idx < count) {
-            const int column_idx = idx / alphabet_size;
-            probs[idx] = f(probs[idx]) / denom[column_idx];
-        }
-        idx += stride;
-    }
-}
-
-template <typename ProbT, int VT = 1, typename Op>
-__global__ void prepare_stable_SM_kernel(Op f, ProbT* probs,
-                                         const ProbT* const col_max,
-                                         int alphabet_size,
-                                         int count) {
-
-    int idx = blockDim.x * blockIdx.x + threadIdx.x;
-    int stride = blockDim.x * gridDim.x;
-#pragma unroll
-    for(int i = 0; i < VT; i++) {
-        if (idx < count) {
-            const int column_idx = idx / alphabet_size;
-            probs[idx] = f(probs[idx] - col_max[column_idx]);
-        }
-        idx += stride;
-    }
-}
