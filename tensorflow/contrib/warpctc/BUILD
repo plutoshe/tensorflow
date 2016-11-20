@@ -43,6 +43,7 @@ tf_custom_op_library(
     ],
     gpu_srcs = [
         "kernels/warpctc_ops.cu.cc",
+        "kernels/ctc_helper.h",
         "kernels/gpu_ctc_kernels.h",
     ], 
     deps =
