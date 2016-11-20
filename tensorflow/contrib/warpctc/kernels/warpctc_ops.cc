@@ -23,45 +23,6 @@ limitations under the License.
 #include "tensorflow/contrib/warpctc/kernels/ctc_helper.h"
 
 namespace tensorflow {
-// Used for easy access to 3d tensor.
-template<typename T>
-class Accessor3D {
- public:
-  Accessor3D(int pb, int pf, T* pv) : b(pb), f(pf), values(pv) {}
-
-  T operator()(int ti, int bi, int fi) const {
-    return values[(ti*b + bi)*f + fi];
-  }
-
-  T& operator()(int ti, int bi, int fi) {
-    return values[(ti*b + bi)*f + fi];
-  }
-
- private:
-  int b, f;
-  // not owner.
-  T* values;
-};
-
-template<typename T>
-class Accessor2D {
- public:
-  Accessor2D(int pf, T* pv) : f(pf), values(pv) {}
-
-  T operator()(int bi, int fi) const {
-    return values[bi*f + fi];
-  }
-
-  T& operator()(int bi, int fi) {
-    return values[bi*f + fi];
-  }
-
- private:
-  int f;
-  // not owner.
-  T* values;
-};
-
 // This a helper class that use for compute for an single sequence, it will be reused for
 // each sequence in a minibatch.
 template<typename ProbT>
@@ -119,14 +80,13 @@ class CpuCTCWorkspace {
     s_inc = new int[S];
 
     output = new ProbT[alphabet_size];
-    blank_index = blank_index;
+    blank_index_ = blank_index;
   }
 
-  void reset(int L, int S, int T, const int* const labels, int blank_index_) {
+  void reset(int L, int S, int T, const int* const labels) {
     std::fill(alphas, alphas + S * T, ctc_helper::neg_inf<ProbT>());
     std::fill(betas, betas + S, ctc_helper::neg_inf<ProbT>());
-    blank_index = blank_index_;
-    repeats = setup_labels(labels, L, S, blank_index);
+    repeats = setup_labels(labels, L, S, blank_index_);
   }
 
   ProbT* alphas;
@@ -136,7 +96,7 @@ class CpuCTCWorkspace {
   int* s_inc;
   ProbT* output;
   int repeats;
-  int blank_index;
+  int blank_index_;
   const int alphabet_size;
 };
 
@@ -147,7 +107,7 @@ class CpuCTC {
     delete workspace_;
     delete[] probs;
   }
-  int blank_index;
+
   // Noncopyable
   CpuCTC(int alphabet_size, int minibatch,
          const ProbT* const pactivations,
@@ -155,8 +115,8 @@ class CpuCTC {
          const int* const plabel_lengths,
          const int* const pinput_lengths,
          ProbT* pcosts, ProbT* pgradients,
-         const int blank_index_) :
-    alphabet_size_(alphabet_size), blank_(alphabet_size-1),
+         const int blank_index = 0) :
+    alphabet_size_(alphabet_size), blank_index_(blank_index),
     minibatch_(minibatch), workspace_(nullptr),
     activations(pactivations), flat_labels(pflat_labels), label_lengths(plabel_lengths),
     input_lengths(pinput_lengths), costs(pcosts), grads(pgradients),
@@ -164,8 +124,7 @@ class CpuCTC {
     int maxT = *std::max_element(input_lengths, input_lengths + minibatch_);
     int maxL = *std::max_element(label_lengths, label_lengths + minibatch_);;
     int maxS = 2 * maxL + 1;
-    blank_index = blank_index_;
-    workspace_ = new CpuCTCWorkspace<ProbT>(maxL, maxS, maxT, alphabet_size_, blank_index);
+    workspace_ = new CpuCTCWorkspace<ProbT>(maxL, maxS, maxT, alphabet_size_, blank_index_);
     // compute softmax, need to make sure the order is right: currently it is t x b x f
     probs = new ProbT[maxT * minibatch_ * alphabet_size_];
   };
@@ -209,7 +168,7 @@ class CpuCTC {
   ctc_helper::log_plus<ProbT> log_add;
 
   int alphabet_size_; // Number of characters plus blank
-  int blank_;
+  int blank_index_;
   int minibatch_;
   CpuCTCWorkspace<ProbT>* workspace_;
 
@@ -227,7 +186,7 @@ class CpuCTC {
   cost_and_grad_kernel(const int* const labels, int T, int L, int mb) {
     const int S = 2*L + 1; // Number of labels with blanks
 
-    workspace_->reset(L, S, T, labels, blank_index);
+    workspace_->reset(L, S, T, labels);
     CpuCTCWorkspace<ProbT>& ctcm(*workspace_);
 
     bool over_threshold = false;
@@ -272,7 +231,7 @@ class CpuCTC {
       int startloop = start;
 
       if (start == 0) {
-        alphas(t, 0) = alphas(t-1, 0) + std::log(yprobs(t, mb, blank_));
+        alphas(t, 0) = alphas(t-1, 0) + std::log(yprobs(t, mb, blank_index_));
         startloop += 1;
       }
 
@@ -280,7 +239,7 @@ class CpuCTC {
         ProbT prev_sum = log_add(alphas(t - 1, i), alphas(t - 1, i - 1));
 
         // Skip two if not on blank and not on repeat.
-        if (allow_skip_blank && labels[i] != blank_ && i >= 2 && labels[i] != labels[i-2])
+        if (allow_skip_blank && labels[i] != blank_index_ && i >= 2 && labels[i] != labels[i-2])
           prev_sum = log_add(prev_sum, alphas(t - 1, i - 2));
         alphas(t, i) = prev_sum + std::log(yprobs(t, mb, labels[i]));
       }
@@ -354,7 +313,7 @@ class CpuCTC {
       for(int i = start; i < endloop; ++i) {
         ProbT next_sum = log_add(betas[i], betas[i+1]);
         // Skip two if not on blank and not on repeat.
-        if (labels[i] != blank_ && i != (S-2) && labels[i] != labels[i+2]){
+        if (labels[i] != blank_index_ && i != (S-2) && labels[i] != labels[i+2]){
           next_sum = log_add(next_sum, betas[i+2]);
         }
         betas[i] = next_sum + std::log(yprobs(t, mb, labels[i]));
@@ -367,7 +326,7 @@ class CpuCTC {
       }
 
       if (end == S) {
-        betas[S-1] = betas[S-1] + std::log(yprobs(t, mb, blank_));
+        betas[S-1] = betas[S-1] + std::log(yprobs(t, mb, blank_index_));
         alphas(t, S-1) += betas[S-1];
 
         output[labels[S-1]] = log_add(alphas(t, S-1), output[labels[S-1]]);
