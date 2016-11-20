@@ -83,81 +83,31 @@ class Gpu {
   }
 };
 
-const int warp_size = 32;
+// Instead of going for the log(f), we will stay  with f in computing softmax on the T*B*F.
+// While this is not the most efficient solution, it should have plenty of speedup and code is
+// still readable.
+template<typename T>
+__global__ void softmax(const T* activations, T* probs, int B, int F) {
+  int tidx = blockIdx.x;
+  int bidx = threadIdx.x;
 
-template<int NT, typename T, typename Rop>
-struct Reduce {
-  enum { Size = NT, Capacity = NT };
-  struct Storage { T shared[Capacity]; };
+  int start = tidx * B * F  + bidx * F;
+  T lmax = activations[start];
 
-  __device__ static T reduce(int tid, T x, Storage& storage, int count, Rop g) {
-    T* s = storage.shared;
-    s[tid] = x;
-    __syncthreads();
-
-    // Fold the data in half with each pass.
-#pragma unroll
-    for(int offset = NT / 2; offset >= warp_size; offset /= 2) {
-      if(tid + offset < count && tid < offset) {
-        // Read from the right half and store to the left half.
-        x = g(x, s[offset + tid]);
-        s[tid] = x;
-      }
-      __syncthreads();
-    }
-
-    T shuff;
-    for (int offset = warp_size / 2; offset > 0; offset /= 2) {
-      shuff = __shfl_down(x, offset);
-      if (tid + offset < count && tid < offset)
-        x = g(x, shuff);
-    }
-    return x;
-  }
-};
-
-template <int NT, typename Iop, typename Rop, typename T>
-__global__ void reduce_rows(Iop f, Rop g, const T* input, T* output,
-                            int num_rows, int num_cols) {
-
-  typedef Reduce<NT, T, Rop> R;
-  __shared__ typename R::Storage storage;
-
-  int tid = threadIdx.x;
-  int idx = tid;
-  int col = blockIdx.x;
-  T curr;
-
-  // Each block works on a column
-  if (idx < num_rows)
-    curr = f(input[idx + col*num_rows]);
-  idx += NT;
-
-
-  while (idx < num_rows) {
-    curr = g(curr, f(input[idx + col*num_rows]));
-    idx += NT;
+  // first we get the max out of activations.
+  for (int i = start + 1; i < start + F; ++i) {
+    if (lmax < activations[i]) lmax = activations[i];
   }
 
-  // Sum thread-totals over the CTA.
-  curr = R::reduce(tid, curr, storage, num_rows, g);
+  T sum = 0;
+  for (int i = start; i < start + F; ++i) {
+    probs[i] = std::exp(activations[i] - lmax);
+    sum += probs[i];
+  }
 
-  // Store result in out
-  if (tid == 0)
-    output[col] = curr;
-};
-
-template<typename T, typename Iof, typename  Rof>
-ctcStatus_t reduce(Iof f, Rof g, const T* input, T* output, int rows, int cols, cudaStream_t stream) {
-  int grid_size = cols;
-  reduce_rows<128><<<grid_size, 128, 0, stream>>>(f, g, input, output, rows, cols);
-
-  cudaStreamSynchronize(stream);
-  cudaError_t err = cudaGetLastError();
-  if (err != cudaSuccess)
-    return CTC_STATUS_EXECUTION_FAILED;
-
-  return CTC_STATUS_SUCCESS;
+  for (int i = start; i < start + F; ++i) {
+    probs[i] /= sum;
+  }
 }
 
 template <typename ProbT>
@@ -198,25 +148,22 @@ class GpuCTC {
                 const int* const flat_labels,
                 const int* const label_lengths,
                 const int* const input_lengths) {
-
     size_t best_config;
     ctcStatus_t status = choose_config(flat_labels, label_lengths,
                                        input_lengths, best_config);
     if (status != CTC_STATUS_SUCCESS)
       return status;
 
-    status = compute_probs(activations);
-    if (status != CTC_STATUS_SUCCESS)
-      return status;
+    softmax<float><<<T_, minibatch_, 0, stream_>>>(activations, probs_, minibatch_, out_dim_);
 
-    launch_gpu_kernels(probs_, grads, best_config, true, true);
+    launch_gpu_kernels(probs_, grads, best_config);
 
-    cudaError_t cuda_status_mem, cuda_status_sync;
-    cuda_status_mem = cudaMemcpyAsync(costs, nll_forward_,
-                                      sizeof(ProbT) * minibatch_,
-                                      cudaMemcpyDeviceToHost, stream_);
-    cuda_status_sync = cudaStreamSynchronize(stream_);
-    if (cuda_status_mem != cudaSuccess || cuda_status_sync != cudaSuccess)
+    cudaError_t status_mem, status_sync;
+    status_mem = cudaMemcpyAsync(costs, nll_forward_,
+                                 sizeof(ProbT) * minibatch_,
+                                 cudaMemcpyDeviceToHost, stream_);
+    status_sync = cudaStreamSynchronize(stream_);
+    if (status_mem != cudaSuccess || status_sync != cudaSuccess)
       return CTC_STATUS_MEMOPS_FAILED;
 
     return CTC_STATUS_SUCCESS;
@@ -226,32 +173,19 @@ class GpuCTC {
 
   template<int NT, int VT>
   ctcStatus_t launch_alpha_beta_kernels(const ProbT* const probs,
-                                        ProbT* grads,
-                                        bool compute_alpha,
-                                        bool compute_beta ) {
-    // One thread block per utterance
-    const int grid_size = minibatch_;
+                                        ProbT* grads) {
+    compute_alpha_kernel<ProbT, NT, VT><<<minibatch_, NT, 0, stream_>>>
+        (probs, label_sizes_, utt_length_,
+            repeats_, labels_without_blanks_, label_offsets_,
+            labels_with_blanks_, alphas_, nll_forward_,
+            minibatch_, out_dim_, S_, T_);
 
-    // The data is laid out so that the next timestep is minibatch entries
-    // away
-    const int stride = minibatch_;
+    compute_betas_and_grad_kernel<ProbT, NT, VT><<<minibatch_, NT, 0, stream_>>>
+        (probs, label_sizes_, utt_length_, repeats_,
+            labels_with_blanks_, alphas_, nll_forward_, nll_backward_,
+            grads, minibatch_, out_dim_, S_, T_);
 
-    if (compute_alpha)
-      compute_alpha_kernel<ProbT, NT, VT><<<grid_size, NT, 0, stream_>>>
-      (probs, label_sizes_, utt_length_,
-          repeats_, labels_without_blanks_, label_offsets_,
-          labels_with_blanks_, alphas_, nll_forward_,
-          stride, out_dim_, S_, T_);
-
-
-    if (compute_beta) {
-      compute_betas_and_grad_kernel<ProbT, NT, VT><<<grid_size, NT, 0, stream_>>>
-          (probs, label_sizes_, utt_length_, repeats_,
-              labels_with_blanks_, alphas_, nll_forward_, nll_backward_,
-              grads, stride, out_dim_, S_, T_);
-
-      cudaStreamSynchronize(stream_);
-    }
+    cudaStreamSynchronize(stream_);
 
     cudaError_t err = cudaGetLastError();
     if (err != cudaSuccess)
@@ -263,23 +197,20 @@ class GpuCTC {
 
   ctcStatus_t
   launch_gpu_kernels(const ProbT* const probs,
-                     ProbT* grads,
-                     size_t config,
-                     bool l_a,
-                     bool l_b) {
+                     ProbT* grads, size_t config) {
     switch(config) {
-      case 0:   {return launch_alpha_beta_kernels<32,   1>(probs, grads, l_a, l_b);}
-      case 1:   {return launch_alpha_beta_kernels<64,   1>(probs, grads, l_a, l_b);}
-      case 2:   {return launch_alpha_beta_kernels<128,  1>(probs, grads, l_a, l_b);}
-      case 3:   {return launch_alpha_beta_kernels<64,   3>(probs, grads, l_a, l_b);}
-      case 4:   {return launch_alpha_beta_kernels<128,  2>(probs, grads, l_a, l_b);}
-      case 5:   {return launch_alpha_beta_kernels<32,   9>(probs, grads, l_a, l_b);}
-      case 6:   {return launch_alpha_beta_kernels<64,   6>(probs, grads, l_a, l_b);}
-      case 7:   {return launch_alpha_beta_kernels<128,  4>(probs, grads, l_a, l_b);}
-      case 8:   {return launch_alpha_beta_kernels<64,   9>(probs, grads, l_a, l_b);}
-      case 9:   {return launch_alpha_beta_kernels<128,  6>(probs, grads, l_a, l_b);}
-      case 10:  {return launch_alpha_beta_kernels<128,  9>(probs, grads, l_a, l_b);}
-      case 11:  {return launch_alpha_beta_kernels<128, 10>(probs, grads, l_a, l_b);}
+      case 0:   {return launch_alpha_beta_kernels<32,   1>(probs, grads);}
+      case 1:   {return launch_alpha_beta_kernels<64,   1>(probs, grads);}
+      case 2:   {return launch_alpha_beta_kernels<128,  1>(probs, grads);}
+      case 3:   {return launch_alpha_beta_kernels<64,   3>(probs, grads);}
+      case 4:   {return launch_alpha_beta_kernels<128,  2>(probs, grads);}
+      case 5:   {return launch_alpha_beta_kernels<32,   9>(probs, grads);}
+      case 6:   {return launch_alpha_beta_kernels<64,   6>(probs, grads);}
+      case 7:   {return launch_alpha_beta_kernels<128,  4>(probs, grads);}
+      case 8:   {return launch_alpha_beta_kernels<64,   9>(probs, grads);}
+      case 9:   {return launch_alpha_beta_kernels<128,  6>(probs, grads);}
+      case 10:  {return launch_alpha_beta_kernels<128,  9>(probs, grads);}
+      case 11:  {return launch_alpha_beta_kernels<128, 10>(probs, grads);}
     }
 
     return CTC_STATUS_EXECUTION_FAILED;
@@ -341,7 +272,7 @@ class GpuCTC {
     labels_with_blanks_ = Gpu<int>::allocate(S_*minibatch_, ctc_helper::BLANK, stream_);
     alphas_ = Gpu<ProbT>::allocate((S_ * T_) * minibatch_);
     denoms_ = Gpu<ProbT>::allocate(cols_);
-    probs_ = Gpu<ProbT>::allocate(out_dim_ * cols_);
+    probs_ = Gpu<ProbT>::allocate(out_dim_ * cols_ * T_);
   }
 
   ctcStatus_t
@@ -370,47 +301,6 @@ class GpuCTC {
 
     if (best_config >= num_configs)
       return CTC_STATUS_UNKNOWN_ERROR;
-
-    return CTC_STATUS_SUCCESS;
-  }
-
-  ctcStatus_t
-  compute_probs(const ProbT* const activations) {
-    cudaError_t cuda_status;
-    cuda_status =
-        cudaMemcpyAsync(probs_, activations,
-                        cols_ * out_dim_ *sizeof(ProbT),
-                        cudaMemcpyDeviceToDevice, stream_);
-    if (cuda_status != cudaSuccess)
-      return CTC_STATUS_MEMOPS_FAILED;
-
-    // Numerically stable SM
-    ctcStatus_t ctc_status =
-        reduce(identity<float>(), ctc_helper::maximum<float>(), probs_, denoms_, out_dim_, cols_, stream_);
-
-    if (ctc_status != CTC_STATUS_SUCCESS)
-      return ctc_status;
-
-    // Kernel launch to subtract maximum
-    const int NT = 128;
-    const int VT = 1;
-    const int NV = NT * VT;
-    const int num_elements = out_dim_ * cols_;
-    const int grid_size = ctc_helper::div_up(num_elements, NV);
-
-    prepare_stable_SM_kernel<ProbT, VT> <<< grid_size, NT, 0, stream_>>>
-        (ctc_helper::identity<ProbT>(), probs_, denoms_, out_dim_, num_elements);
-
-    // Reduce along columns to calculate denominator
-    ctc_status =
-        reduce(exponential<float>(), add<float>(), probs_, denoms_, out_dim_, cols_, stream_);
-        //reduce_exp(probs_, denoms_, out_dim_, cols_, stream_);
-    if (ctc_status != CTC_STATUS_SUCCESS)
-      return ctc_status;
-
-    // Kernel launch to calculate probabilities
-    compute_probs_kernel<ProbT, VT><<<grid_size, NT, 0, stream_>>>
-        (ctc_helper::exponential<ProbT>(), probs_, denoms_, out_dim_, num_elements);
 
     return CTC_STATUS_SUCCESS;
   }
@@ -455,18 +345,21 @@ class GpuWarpCTCLossOp : public OpKernel {
     const Tensor& labels_indices_tensor = ctx->input(1);
     const Tensor& labels_values_tensor = ctx->input(2);
     const Tensor& seq_len_tensor = ctx->input(3);
+
     auto input = input_tensor.tensor<float, 3>();
-    float *activations_gpu = (float*)input.data();
+    float *activations = (float*)input.data();
     const TensorShape& inputs_shape = input_tensor.shape();
     const int64 max_time = inputs_shape.dim_size(0);
     const int64 batch_size = inputs_shape.dim_size(1);
     const int64 num_classes = inputs_shape.dim_size(2);
+
     const int alphabet_size = num_classes;
     TensorShape labels_shape({batch_size, max_time});
     std::vector<int64> order{0, 1};
     auto labels_indices = labels_indices_tensor.tensor<int64, 2>();
     auto labels_values = labels_values_tensor.tensor<int, 1>();
     auto seq_len = seq_len_tensor.tensor<int, 1>();
+
     int64 last_first = 0, sum = 0;
     std::vector<int> labels;
     std::vector<int> label_lengths;
@@ -491,21 +384,20 @@ class GpuWarpCTCLossOp : public OpKernel {
     int lengths[size_of_lengths];
     cudaMemcpyAsync(lengths, seq_len.data(), size_of_lengths * sizeof(int), cudaMemcpyDeviceToHost, stream);
 
-
     Tensor* loss = nullptr;
     OP_REQUIRES_OK(ctx, ctx->allocate_output("loss", seq_len_tensor.shape(), &loss));
     auto loss_t = loss->vec<float>();
 
     Tensor* gradient;
-    OP_REQUIRES_OK(ctx,
-                   ctx->allocate_output("gradient", inputs_shape, &gradient));
-    auto gradient_t = gradient->tensor<float, 3>();
+    OP_REQUIRES_OK(ctx, ctx->allocate_output("gradient", inputs_shape, &gradient));
+    auto gradients = gradient->tensor<float, 3>();
     float loss_cpu[size_of_lengths];
-    cudaMemset(gradient_t.data(), 0, gradient->NumElements() * sizeof(float));
+
+    cudaMemset(gradients.data(), 0, gradient->NumElements() * sizeof(float));
 
     GpuCTC<float> ctc(alphabet_size, size_of_lengths, stream);
 
-    ctc.cost_and_grad(activations_gpu, gradient_t.data(), loss_cpu,
+    ctc.cost_and_grad(activations, gradients.data(), loss_cpu,
                       labels.data(), label_lengths.data(), lengths);
 
     cudaMemcpyAsync(loss_t.data(), loss_cpu, size_of_lengths * sizeof(float), cudaMemcpyHostToDevice, stream);
