@@ -46,7 +46,7 @@ def SimpleSparseTensorFrom(x):
 
 class CTCLossTest(tf.test.TestCase):
 
-  def _testCTCLoss(self, inputs, seq_lens, labels,
+  def _testCTCLoss(self, inputs, seq_lens, real_label_lens, labels,
                    loss_truth, grad_truth, expected_err_re=None):
     self.assertEquals(len(inputs), len(grad_truth))
 
@@ -55,7 +55,9 @@ class CTCLossTest(tf.test.TestCase):
     with self.test_session(use_gpu=True) as sess:
       loss = warpctc_ops.warp_ctc_loss(inputs=inputs_t,
                                      labels=labels,
-                                     sequence_length=seq_lens,                                     blank_index=0)
+                                     sequence_length=seq_lens,
+                                     real_label_length=real_label_lens,
+                                     blank_index=0)
       grad = tf.gradients(loss, [inputs_t])[0]
 
       self.assertShapeEqual(loss_truth, loss)
@@ -134,7 +136,8 @@ class CTCLossTest(tf.test.TestCase):
     depth = 6
 
     # seq_len_0 == 5
-    targets_0 = [0, 1, 2, 1, 0]
+    targets_0 = [0, -1, 1, -1, 2, -1, 1, -1, 0, -1]
+    real_label_len_0 = 5;
     loss_log_prob_0 = -3.34211
     # dimensions are time x depth
     input_prob_matrix_0 = np.asarray(
@@ -154,7 +157,8 @@ class CTCLossTest(tf.test.TestCase):
         dtype=np.float32)
 
     # seq_len_1 == 5
-    targets_1 = [0, 1, 1, 0]
+    targets_1 = [0, -1, 1, -1, 1, -1, 0, -1]
+    real_label_len_1 = 4;
     loss_log_prob_1 = -5.42262
     # dimensions are time x depth
 
@@ -188,6 +192,9 @@ class CTCLossTest(tf.test.TestCase):
     # batch_size length vector of sequence_lengths
     seq_lens = np.array([5, 5], dtype=np.int32)
 
+    # real_label length vector of real_label_lengths
+    real_label_lens = np.array([real_label_len_0, real_label_len_1], dtype=np.int32)
+
     # output: batch_size length vector of negative log probabilities
     loss_truth = np.array([-loss_log_prob_0, -loss_log_prob_1], np.float32)
 
@@ -199,7 +206,7 @@ class CTCLossTest(tf.test.TestCase):
     # convert grad_truth into [max_time x batch_size x depth] Tensor
     grad_truth = np.asarray(grad_truth, dtype=np.float32)
 
-    self._testCTCLoss(inputs, seq_lens, labels, loss_truth, grad_truth)
+    self._testCTCLoss(inputs, seq_lens, real_label_lens, labels, loss_truth, grad_truth)
 
 if __name__ == "__main__":
   tf.test.main()

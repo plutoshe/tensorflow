@@ -18,7 +18,7 @@ assert _warpctc_ops_so, "Could not load _warpctc_ops.so."
 # NOTE(ebrevdo): We redefine CTCLoss from gen_ctc_ops to only return
 # the first output. The second output is only used for the gradient.
 # pylint: disable=protected-access, invalid-name
-def warp_ctc_loss(inputs, labels, sequence_length,
+def warp_ctc_loss(inputs, labels, sequence_length, real_label_length
                   preprocess_collapse_repeated=False, ctc_merge_repeated=True, blank_index=0):
   if not isinstance(labels, ops.SparseTensor):
     raise TypeError("Expected labels to be a SparseTensor")
@@ -34,6 +34,7 @@ def warp_ctc_loss(inputs, labels, sequence_length,
       labels.indices,
       new_values,
       sequence_length,
+      real_label_length,
       preprocess_collapse_repeated=preprocess_collapse_repeated,
       ctc_merge_repeated=ctc_merge_repeated,
       blank_index=blank_index)
