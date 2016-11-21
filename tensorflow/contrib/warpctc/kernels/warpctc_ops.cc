@@ -157,10 +157,8 @@ class CpuCTC {
       const int T = input_lengths[mb]; // Length of utterance (time)
       const int L = label_lengths[mb]; // Number of labels in transcription
 
-      bool mb_status;
       int label_count = std::accumulate(label_lengths, label_lengths + mb, 0);
-      std::tie(costs[mb], mb_status) =
-          cost_and_grad_kernel(flat_labels + label_count, T, L, mb);
+      costs[mb] = cost_and_grad_kernel(flat_labels + label_count, T, L, mb);
     }
   }
 
@@ -182,8 +180,8 @@ class CpuCTC {
 
   ProbT* probs;
 
-  std::tuple<ProbT, bool>
-  cost_and_grad_kernel(const int* const labels, int T, int L, int mb) {
+
+  ProbT cost_and_grad_kernel(const int* const labels, int T, int L, int mb) {
     const int S = 2*L + 1; // Number of labels with blanks
 
     workspace_->reset(L, S, T, labels);
@@ -195,15 +193,8 @@ class CpuCTC {
     CHECK(L + ctcm.repeats <= T);
 
     ProbT llForward = compute_alphas(S, T, mb, ctcm);
-
-    ProbT llBackward = compute_betas_and_grad(llForward, S, T, mb, ctcm);
-
-    ProbT diff = std::abs(llForward - llBackward);
-    if (diff > ctc_helper::threshold) {
-      over_threshold = true;
-    }
-
-    return std::make_tuple(-llForward, over_threshold);
+    compute_betas_and_grad(llForward, S, T, mb, ctcm);
+    return -llForward;
   }
 
 
@@ -432,7 +423,6 @@ class CpuWarpCTCLossOp : public OpKernel {
                       seq_len.data(), loss_t.data(), gradient_t.data(), blank_index);
 
     ctc.cost_and_grad();
-
   }
 };
 
