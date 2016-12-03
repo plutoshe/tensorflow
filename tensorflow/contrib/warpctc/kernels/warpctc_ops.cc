@@ -82,30 +82,6 @@ class CpuCTCWorkspace {
     for (int i = 0; i < S; ++i) {
       labels_w_blanks[i] = labels[i];
     }
-    // std::cout << "repeats:" << repeats << std::endl;
-    // std::cout << "L:" << L << std::endl;
-    // std::cout << "S:" << S << std::endl;
-    // std::cout << "BLANK:" << BLANK << std::endl;
-    // for (int i = 0; i < S; i++) {
-    //   std::cout << "labels(" << i << "): " << labels[i] << std::endl;
-    // }
-
-    // for (int i = 0; i < L + repeats; i++) {
-    //   std::cout << "s_inc(" << i << "): " << s_inc[i] << std::endl;
-    // }
-    // for (int i = 0; i < L + repeats; i++) {
-    //   std::cout << "e_inc(" << i << "): " << e_inc[i] << std::endl;
-    // }
-    // for (int i = 0; i < S; i++) {
-    //   std::cout << "l_label(" << i << "): " << l_label[i] << std::endl;
-    // }
-    // for (int i = 0; i < l; i++) {
-    //   std::cout << "s_label(" << i << "): " << s_label[i] << std::endl;
-    // }
-    // for (int i = 0; i < l; i++) {
-    //   std::cout << "e_label(" << i << "): " << e_label[i] << std::endl;
-    // }
-
     return repeats;
   }
 
@@ -255,9 +231,7 @@ class CpuCTC {
 
     // T should be at least greater than L + number of repeats.
     CHECK(L + ctcm.repeats <= T);
-
     ProbT llForward = compute_alphas(L, S, T, mb, ctcm);
-    // std::cout << "llForward: " << llForward << std::endl;
     ProbT llBackward = compute_betas_and_grad(llForward, L, S, T, mb, ctcm);
 
     ProbT diff = std::abs(llForward - llBackward);
@@ -265,10 +239,7 @@ class CpuCTC {
       over_threshold = true;
     }
 
-    // std::cout << "llBackward: " << llBackward << std::endl;
-
     return -llForward;
-    // return -llForward;
   }
 
 
@@ -281,29 +252,16 @@ class CpuCTC {
     const int* const s_label = ctcm.s_label;
     const int* const l_label = ctcm.l_label;
 
-    Accessor2D<ProbT> alphas(alphabet_size_, ctcm.alphas);
+    Accessor2D<ProbT> alphas(S, ctcm.alphas);
     Accessor3D<ProbT> yprobs(minibatch_, alphabet_size_, probs);
     int start = ((L + repeats - T) < 0) ? 0 : 1;
     int end = L > 0 ? e_label[1] : 1;
-    // std::cout << "start:" << start << std::endl;
-    // std::cout << "end:" << end << std::endl;
-    // // Setup the boundary condition.
-    // std::cout << "einc:" << std::endl;
-    // for(int t = 0; t < S; ++t) {
-    //   std::cout << e_inc[t] << std::endl;
-    // }
-    // std::cout << "sinc:" << std::endl;
-    // for(int t = 0; t < S; ++t) {
-    //   std::cout << s_inc[t] << std::endl;
-    // }
-
     for (int i = start; i < end; ++i) {
         alphas(0, i) = std::log(yprobs(0, mb, labels[i]));
     }
     for(int t = 1; t < T; ++t) {
       // Still a bit murky here.
       int remain = L + repeats - (T - t);
-      // std::cout << "start, end, remain, t -1:" << start << "," << end << "," << remain <<  "," << t - 1 << std::endl;
       if(remain >= 0) start += s_inc[remain];
       if(t <= L + repeats) end += e_inc[t - 1];
       int startloop = start;
@@ -321,7 +279,6 @@ class CpuCTC {
         }
         // Skip two if not on blank and not on repeat.
         if (allow_skip_blank && labels[i] != blank_index_ && l >= 2) {
-          // std::cout <<s_label[l - 2] <<  "l" << e_label[l - 2] << std::endl;
 
           for (int j = s_label[l - 2]; j < e_label[l - 2]; j++)
             if (labels[i] != labels[j]) {
@@ -336,7 +293,6 @@ class CpuCTC {
     for(int i = start; i < end; ++i) {
       loglike = log_add(loglike, alphas(T- 1, i));
     }
-
     return loglike;
   }
 
@@ -356,7 +312,7 @@ class CpuCTC {
     const int* const s_label = ctcm.s_label;
     const int* const l_label = ctcm.l_label;
 
-    Accessor2D<ProbT> alphas(alphabet_size_, ctcm.alphas);
+    Accessor2D<ProbT> alphas(S, ctcm.alphas);
     Accessor3D<ProbT> yprobs(minibatch_, alphabet_size_, probs);
     Accessor3D<ProbT> ygrads(minibatch_, alphabet_size_, grads);
 
@@ -398,16 +354,13 @@ class CpuCTC {
       int endloop = end == S ? end - 1 : end;
 
       std::fill(output, output + alphabet_size_, ctc_helper::neg_inf<ProbT>());
-      // std::cout << "t:" << t << std::endl;
-      // std::cout << "start:" << start << std::endl;
-      // std::cout << "endloop:" << endloop << std::endl;
       for(int i = start; i < endloop; ++i) {
         int l = l_label[i];
         ProbT next_sum = betas[i];
         for (int j = s_label[l + 1]; j < e_label[l + 1]; j++)
           next_sum = log_add(next_sum, betas[j]);
         // Skip two if not on blank and not on repeat.
-        if (labels[i] != blank_index_){
+        if (labels[i] != blank_index_ && l < S - 2){
           for (int j = s_label[l + 2]; j < e_label[l + 2]; j++)
             if (labels[i] != labels[j])
               next_sum = log_add(next_sum, betas[j]);
@@ -502,6 +455,9 @@ class CpuWarpCTCLossOp : public OpKernel {
     // The length of each label for each example in the minibatch.
     // and add a blank between adjacent labels
     // add blank at the begin and the end of minibatch
+    if (blank_index < 0) {
+      blank_index += alphabet_size;
+    }
     std::vector<int> label_lengths;
     std::vector<int> label_real_lengths;
     if (labels_indices_tensor.dim_size(0) > 0) {
