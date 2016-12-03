@@ -19,107 +19,66 @@ limitations under the License.
 #include "tensorflow/core/platform/logging.h"
 #include "tensorflow/core/platform/macros.h"
 #include "tensorflow/core/util/sparse/sparse_tensor.h"
-#include "tensorflow/contrib/warpctc/kernels/warp-ctc/include/detail/ctc_helper.h"
+#include "tensorflow/contrib/warpctc/kernels/ctc_helper.h"
 
 
 namespace tensorflow {
-// This a helper class that use for compute for an single sequence, it will be reused for
-// each sequence in a minibatch.
-template<typename T>
-class Accessor3D {
- public:
-  Accessor3D(int pb, int pf, T* pv) : b(pb), f(pf), values(pv) {}
-
-  T operator()(int ti, int bi, int fi) const {
-    return values[(ti*b + bi)*f + fi];
-  }
-
-  T& operator()(int ti, int bi, int fi) {
-    return values[(ti*b + bi)*f + fi];
-  }
-
- private:
-  int b, f;
-  // not owner.
-  T* values;
-};
-
-template<typename T>
-class Accessor2D {
- public:
-  Accessor2D(int pf, T* pv) : f(pf), values(pv) {}
-
-  T operator()(int bi, int fi) const {
-    return values[bi*f + fi];
-  }
-
-  T& operator()(int bi, int fi) {
-    return values[bi*f + fi];
-  }
-
- private:
-  int f;
-  // not owner.
-  T* values;
-};
 
 template<typename ProbT>
 class CpuCTCWorkspace {
 
  private:
-  bool cmp(const int* const labels, const int* const s_label, const int* const e_label, int a, int b) {
-    for (int j = s_label[a]; j < e_label[a]; j++)
-      for (int k = s_label[b]; k < e_label[b]; k++)
+  bool cmp(const int* const labels, const int* const slot_start, const int* const slot_end, int a, int b) {
+    for (int j = slot_start[a]; j < slot_end[a]; j++)
+      for (int k = slot_start[b]; k < slot_end[b]; k++)
         if (labels[j] == labels[k])
           return true;
     return false;
   }
-  int setup_labels(const int* const labels, int L, int S, int BLANK) {
+
+  int setup_labels(const int* plabels, int L, int S, int BLANK) {
     int e_counter = 0;
     int s_counter = 0;
-
+    labels = plabels;
     s_inc[s_counter++] = 1;
 
     int repeats = 0;
     int l = 1;
-    s_label[0] = 0;
-    e_label[0] = 1;
-    l_label[0] = 0;
+    slot_start[0] = 0;
+    slot_end[0] = 1;
+    slot_index[0] = 0;
     int last_i = 1;
     for (int i = 1; i < S; ++i) {
       if (labels[i] == BLANK) {
-        s_label[l] = last_i;
-        e_label[l] = i;
+        slot_start[l] = last_i;
+        slot_end[l] = i;
         ++l;
-        s_label[l] = i;
-        e_label[l] = i + 1;
+        slot_start[l] = i;
+        slot_end[l] = i + 1;
         // blank setting
-        l_label[i] = l;
+        slot_index[i] = l;
         ++l;
         last_i = i + 1;
       } else {
-        l_label[i] = l;
+        slot_index[i] = l;
         // non-blank  setting
       }
     }
     for (int i = 1; i < L; ++i) {
-      if (cmp(labels, s_label, e_label, i - 1, i)) {
-        s_inc[s_counter++] = e_label[i * 2 - 1] - s_label[i * 2 - 1];
+      if (cmp(labels, slot_start, slot_end, i - 1, i)) {
+        s_inc[s_counter++] = slot_end[i * 2 - 1] - slot_start[i * 2 - 1];
         s_inc[s_counter++] = 1;
         e_inc[e_counter++] = 1;
-        e_inc[e_counter++] = e_label[i * 2 + 1] - s_label[i * 2 + 1];
+        e_inc[e_counter++] = slot_end[i * 2 + 1] - slot_start[i * 2 + 1];
         ++repeats;
       }
       else {
-        s_inc[s_counter++] = e_label[i * 2 - 1] - s_label[i * 2 - 1] + 1;
-        e_inc[e_counter++] = e_label[i * 2 + 1] - s_label[i * 2 + 1] + 1;
+        s_inc[s_counter++] = slot_end[i * 2 - 1] - slot_start[i * 2 - 1] + 1;
+        e_inc[e_counter++] = slot_end[i * 2 + 1] - slot_start[i * 2 + 1] + 1;
       }
     }
     e_inc[e_counter++] = 1;
 
-    for (int i = 0; i < S; ++i) {
-      labels_w_blanks[i] = labels[i];
-    }
     return repeats;
   }
 
@@ -127,27 +86,27 @@ class CpuCTCWorkspace {
   ~CpuCTCWorkspace() {
     delete[] alphas;
     delete[] betas;
-    delete[] labels_w_blanks;
     delete[] e_inc;
     delete[] s_inc;
-    delete[] l_label;
-    delete[] e_label;
-    delete[] s_label;
+    delete[] slot_index;
+    delete[] slot_end;
+    delete[] slot_start;
     delete[] output;
   }
 
-  CpuCTCWorkspace(int L, int S, int T, int a, int blank_index) : repeats(0), alphabet_size(a){
+  CpuCTCWorkspace(int S, int T, int a, int blank_index) : repeats(0), alphabet_size(a) {
     alphas = new ProbT[S*T];
     betas = new ProbT[S];
 
-    labels_w_blanks = new int[S];
+    labels = nullptr;
+
     e_inc = new int[S];
     s_inc = new int[S];
 
-    l_label = new int[S];
+    slot_index = new int[S];
 
-    e_label = new int[S];
-    s_label = new int[S];
+    slot_end = new int[S];
+    slot_start = new int[S];
 
 
     output = new ProbT[alphabet_size];
@@ -162,11 +121,11 @@ class CpuCTCWorkspace {
 
   ProbT* alphas;
   ProbT* betas;
-  int* labels_w_blanks;
+  const int* labels;
 
-  int* l_label;
-  int* e_label;
-  int* s_label;
+  int* slot_index;
+  int* slot_end;
+  int* slot_start;
   int* e_inc;
   int* s_inc;
 
@@ -189,20 +148,19 @@ class CpuCTC {
          const ProbT* const pactivations,
          const int* const pflat_labels,
          const int* const plabel_lengths,
-         const int* const plabel_real_lengths,
+         const int* const pslot_lengths,
          const int* const pinput_lengths,
          ProbT* pcosts, ProbT* pgradients,
          const int blank_index = 0) :
     alphabet_size_(alphabet_size), blank_index_(blank_index),
     minibatch_(minibatch), workspace_(nullptr),
-    activations(pactivations), flat_labels(pflat_labels), label_lengths(plabel_lengths), label_real_lengths(plabel_real_lengths),
+    activations(pactivations), flat_labels(pflat_labels),
+    label_lengths(plabel_lengths), slot_lengths(pslot_lengths),
     input_lengths(pinput_lengths), costs(pcosts), grads(pgradients),
     probs(nullptr) {
     int maxT = *std::max_element(input_lengths, input_lengths + minibatch_);
-    int maxL = *std::max_element(label_real_lengths, label_real_lengths + minibatch_);
     int maxS = *std::max_element(label_lengths, label_lengths + minibatch_);
-    // int maxS = maxL * 2 + 1;
-    workspace_ = new CpuCTCWorkspace<ProbT>(maxL, maxS, maxT, alphabet_size_, blank_index_);
+    workspace_ = new CpuCTCWorkspace<ProbT>(maxS, maxT, alphabet_size_, blank_index_);
     // compute softmax, need to make sure the order is right: currently it is t x b x f
     probs = new ProbT[maxT * minibatch_ * alphabet_size_];
   };
@@ -234,7 +192,7 @@ class CpuCTC {
     for (int mb = 0; mb < minibatch_; ++mb) {
       const int T = input_lengths[mb]; // Length of utterance (time)
       const int S = label_lengths[mb]; // Length of utterance (time)
-      const int L = label_real_lengths[mb]; // Number of labels in transcription
+      const int L = slot_lengths[mb]; // Number of labels in transcription
 
       int label_count = std::accumulate(label_lengths, label_lengths + mb, 0);
       costs[mb] = cost_and_grad_kernel(flat_labels + label_count, T, S, L, mb);
@@ -252,7 +210,7 @@ class CpuCTC {
   const ProbT* const activations;
   const int* const flat_labels;
   const int* const label_lengths;
-  const int* const label_real_lengths;
+  const int* const slot_lengths;
   const int* const input_lengths;
 
   ProbT* costs;
@@ -284,15 +242,15 @@ class CpuCTC {
     int repeats = ctcm.repeats;
     const int* const e_inc = ctcm.e_inc;
     const int* const s_inc = ctcm.s_inc;
-    const int* const labels = ctcm.labels_w_blanks;
-    const int* const e_label = ctcm.e_label;
-    const int* const s_label = ctcm.s_label;
-    const int* const l_label = ctcm.l_label;
+    const int* const labels = ctcm.labels;
+    const int* const slot_end = ctcm.slot_end;
+    const int* const slot_start = ctcm.slot_start;
+    const int* const slot_index = ctcm.slot_index;
 
     Accessor2D<ProbT> alphas(S, ctcm.alphas);
     Accessor3D<ProbT> yprobs(minibatch_, alphabet_size_, probs);
     int start = ((L + repeats - T) < 0) ? 0 : 1;
-    int end = L > 0 ? e_label[1] : 1;
+    int end = L > 0 ? slot_end[1] : 1;
     for (int i = start; i < end; ++i) {
         alphas(0, i) = std::log(yprobs(0, mb, labels[i]));
     }
@@ -309,15 +267,15 @@ class CpuCTC {
       }
 
       for(int i = startloop; i < end; ++i) {
-        int l = l_label[i];
+        int l = slot_index[i];
         ProbT prev_sum = alphas(t - 1, i);
-        for (int j = s_label[l - 1]; j < e_label[l - 1]; j++) {
+        for (int j = slot_start[l - 1]; j < slot_end[l - 1]; j++) {
            prev_sum = log_add(prev_sum, alphas(t - 1, j));
         }
         // Skip two if not on blank and not on repeat.
         if (allow_skip_blank && labels[i] != blank_index_ && l >= 2) {
 
-          for (int j = s_label[l - 2]; j < e_label[l - 2]; j++)
+          for (int j = slot_start[l - 2]; j < slot_end[l - 2]; j++)
             if (labels[i] != labels[j]) {
               prev_sum = log_add(prev_sum, alphas(t - 1, j));
             }
@@ -344,10 +302,10 @@ class CpuCTC {
     int repeats = ctcm.repeats;
     const int* const e_inc = ctcm.e_inc;
     const int* const s_inc = ctcm.s_inc;
-    const int* const labels = ctcm.labels_w_blanks;
-    const int* const e_label = ctcm.e_label;
-    const int* const s_label = ctcm.s_label;
-    const int* const l_label = ctcm.l_label;
+    const int* const labels = ctcm.labels;
+    const int* const slot_end = ctcm.slot_end;
+    const int* const slot_start = ctcm.slot_start;
+    const int* const slot_index = ctcm.slot_index;
 
     Accessor2D<ProbT> alphas(S, ctcm.alphas);
     Accessor3D<ProbT> yprobs(minibatch_, alphabet_size_, probs);
@@ -356,7 +314,7 @@ class CpuCTC {
     ProbT* betas = ctcm.betas;
     ProbT* output = ctcm.output;
 
-    int start = S > 1 ? s_label[l_label[S - 2]] : 0;
+    int start = S > 1 ? slot_start[slot_index[S - 2]] : 0;
     int end = (T > L + repeats) ? S : S-1;
 
     std::fill(output, output + alphabet_size_, ctc_helper::neg_inf<ProbT>());
@@ -392,13 +350,13 @@ class CpuCTC {
 
       std::fill(output, output + alphabet_size_, ctc_helper::neg_inf<ProbT>());
       for(int i = start; i < endloop; ++i) {
-        int l = l_label[i];
+        int l = slot_index[i];
         ProbT next_sum = betas[i];
-        for (int j = s_label[l + 1]; j < e_label[l + 1]; j++)
+        for (int j = slot_start[l + 1]; j < slot_end[l + 1]; j++)
           next_sum = log_add(next_sum, betas[j]);
         // Skip two if not on blank and not on repeat.
         if (labels[i] != blank_index_ && l < S - 2){
-          for (int j = s_label[l + 2]; j < e_label[l + 2]; j++)
+          for (int j = slot_start[l + 2]; j < slot_end[l + 2]; j++)
             if (labels[i] != labels[j])
               next_sum = log_add(next_sum, betas[j]);
         }
@@ -412,8 +370,8 @@ class CpuCTC {
       }
 
       if (end == S) {
-        int l = l_label[S - 1];
-        for (int j = s_label[l]; j < e_label[l]; j++) {
+        int l = slot_index[S - 1];
+        for (int j = slot_start[l]; j < slot_end[l]; j++) {
           betas[j] = betas[j] + std::log(yprobs(t, mb, blank_index_));
           alphas(t, j) += betas[j];
 
@@ -486,7 +444,7 @@ class CpuWarpCTCLossOp : public OpKernel {
     auto seq_len = seq_len_tensor.tensor<int, 1>();
 
     // get the label and label_length ready.
-    int64 last_first = 0, sum = 0, label_sum = 0, last_second = 0;
+    int64 last_first = 0, slot_sum = 0, label_sum = 0, last_second = 0;
     //  A concatenation of all the labels for the minibatch.
     std::vector<int> labels;
     // The length of each label for each example in the minibatch.
@@ -496,14 +454,14 @@ class CpuWarpCTCLossOp : public OpKernel {
       blank_index += alphabet_size;
     }
     std::vector<int> label_lengths;
-    std::vector<int> label_real_lengths;
+    std::vector<int> slot_lengths;
     if (labels_indices_tensor.dim_size(0) > 0) {
       // initialization
       labels.push_back(blank_index);
       last_first = labels_indices(0, 0);
       last_second = labels_indices(0, 1);
       labels.push_back(labels_values(0));
-      sum = 1; label_sum = 2;
+      slot_sum = 1; label_sum = 2;
 
       for(int i = 1; i < labels_indices_tensor.dim_size(0); i++) {
         int64 first, second;
@@ -515,26 +473,26 @@ class CpuWarpCTCLossOp : public OpKernel {
           if (second != last_second) {
               labels.push_back(blank_index);
               label_sum++;
-              sum++;
+              slot_sum++;
           }
           labels.push_back(label_of_first);
           label_sum++;
         } else {
           labels.push_back(blank_index);
           label_lengths.push_back(label_sum+1);
-          label_real_lengths.push_back(sum);
+          slot_lengths.push_back(slot_sum);
           labels.push_back(blank_index);
           labels.push_back(label_of_first);
           last_first = first;
-          sum = 1;
+          slot_sum = 1;
           label_sum = 2;
         }
         last_second = second;
       }
-      if (sum != 0) {
+      if (slot_sum != 0) {
         labels.push_back(blank_index);
         label_lengths.push_back(label_sum+1);
-        label_real_lengths.push_back(sum);
+        slot_lengths.push_back(slot_sum);
       }
     }
 
@@ -546,7 +504,7 @@ class CpuWarpCTCLossOp : public OpKernel {
     OP_REQUIRES_OK(ctx, ctx->allocate_output("gradient", inputs_shape, &gradient));
     auto gradient_t = gradient->tensor<float, 3>();
     CpuCTC<float> ctc(alphabet_size, seq_len_tensor.dim_size(0), activations,
-                      labels.data(), label_lengths.data(), label_real_lengths.data(),
+                      labels.data(), label_lengths.data(), slot_lengths.data(),
                       seq_len.data(), loss_t.data(), gradient_t.data(), blank_index);
 
     ctc.cost_and_grad();
