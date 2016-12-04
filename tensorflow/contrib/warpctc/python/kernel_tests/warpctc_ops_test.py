@@ -23,7 +23,7 @@ import tensorflow as tf
 from tensorflow.contrib.warpctc.python.ops import warpctc_ops
 
 
-def MultiLabelSimpleSparseTensorFrom(x):
+def MultiLabelSimpleSparseTensorFrom(x, blank_index):
   """Create a very simple SparseTensor with dimensions (batch, time).
   Args:
     x: a list of lists of type int
@@ -35,11 +35,17 @@ def MultiLabelSimpleSparseTensorFrom(x):
   for batch_i, batch in enumerate(x):
     time_slot = 0
     for i in range(len(batch)):
-      if batch[i] == -1:
-        time_slot+=1
+      if batch[i] == blank_index:
+        time_slot += 1
+        x_ix.append([batch_i, time_slot])
+        x_val.append(batch[i])
+        time_slot += 1
       else:
         x_ix.append([batch_i, time_slot])
         x_val.append(batch[i])
+
+  print(x_ix)
+  print(x_val)
   x_shape = [len(x), np.asarray(x_ix).max(0)[1]+1]
   x_ix = tf.constant(x_ix, tf.int64)
   x_val = tf.constant(x_val, tf.int32)
@@ -48,7 +54,7 @@ def MultiLabelSimpleSparseTensorFrom(x):
   return tf.SparseTensor(x_ix, x_val, x_shape)
 
 
-def SimpleSparseTensorFrom(x):
+def SimpleSparseTensorFrom(x, blank_index):
   """Create a very simple SparseTensor with dimensions (batch, time).
   Args:
     x: a list of lists of type int
@@ -58,9 +64,19 @@ def SimpleSparseTensorFrom(x):
   x_ix = []
   x_val = []
   for batch_i, batch in enumerate(x):
-    for time, val in enumerate(batch):
-      x_ix.append([batch_i, time])
-      x_val.append(val)
+    time_slot = 0
+    for i in range(len(batch)):
+      if batch[i] == blank_index:
+        time_slot += 1
+        x_ix.append([batch_i, time_slot])
+        x_val.append(batch[i])
+        time_slot += 1
+      else:
+        x_ix.append([batch_i, time_slot])
+        x_val.append(batch[i])
+
+  print(x_ix)
+  print(x_val)
   x_shape = [len(x), np.asarray(x_ix).max(0)[1]+1]
   x_ix = tf.constant(x_ix, tf.int64)
   x_val = tf.constant(x_val, tf.int32)
@@ -72,16 +88,16 @@ def SimpleSparseTensorFrom(x):
 class CTCLossTest(tf.test.TestCase):
 
   def _testCTCLoss(self, inputs, seq_lens, labels,
-                   loss_truth, grad_truth, expected_err_re=None):
+                   loss_truth, grad_truth, blank_index=0, expected_err_re=None):
     self.assertEquals(len(inputs), len(grad_truth))
 
     inputs_t = tf.constant(inputs)
 
     with self.test_session(use_gpu=True) as sess:
       loss = warpctc_ops.warp_ctc_loss(inputs=inputs_t,
-                                     labels=labels,
-                                     sequence_length=seq_lens,
-                                     blank_index=-1)
+                                      labels=labels,
+                                      sequence_length=seq_lens,
+                                      blank_index=blank_index)
       grad = tf.gradients(loss, [inputs_t])[0]
       self.assertShapeEqual(loss_truth, loss)
       self.assertShapeEqual(grad_truth, grad)
@@ -157,9 +173,9 @@ class CTCLossTest(tf.test.TestCase):
 
     # max_time_steps == 7
     depth = 6
-
+    blank_index_ = 5
     # seq_len_0 == 5
-    targets_0 = [0, 1, 2, 1, 0]
+    targets_0 = [5, 0, 5, 1, 5, 2, 5, 1, 5, 0, 5]
     loss_log_prob_0 = -3.34211
     # dimensions are time x depth
     input_prob_matrix_0 = np.asarray(
@@ -179,7 +195,7 @@ class CTCLossTest(tf.test.TestCase):
         dtype=np.float32)
 
     # seq_len_1 == 5
-    targets_1 = [0, 1, 1, 0]
+    targets_1 = [5, 0, 5, 1, 5, 1, 5, 0, 5]
     loss_log_prob_1 = -5.42262
     # dimensions are time x depth
 
@@ -208,7 +224,7 @@ class CTCLossTest(tf.test.TestCase):
     inputs = np.asarray(inputs, dtype=np.float32)
 
     # len batch_size array of label vectors
-    labels = SimpleSparseTensorFrom([targets_0, targets_1])
+    labels = SimpleSparseTensorFrom([targets_0, targets_1], blank_index_)
 
     # batch_size length vector of sequence_lengths
     seq_lens = np.array([5, 5], dtype=np.int32)
@@ -224,7 +240,7 @@ class CTCLossTest(tf.test.TestCase):
     # convert grad_truth into [max_time x batch_size x depth] Tensor
     grad_truth = np.asarray(grad_truth, dtype=np.float32)
 
-    self._testCTCLoss(inputs, seq_lens, labels, loss_truth, grad_truth)
+    self._testCTCLoss(inputs, seq_lens, labels, loss_truth, grad_truth, blank_index=blank_index_)
 
   def testMultiLabel(self):
     """Test two batch entries."""
@@ -274,8 +290,8 @@ class CTCLossTest(tf.test.TestCase):
     depth = 6
 
     # seq_len_0 == 5
-
-    m_targets_0 = [0, -1, 1, 2, -1, 3, 4, -1, 1, -1, 0, -1]
+    blank_index_ = 5
+    m_targets_0 = [5, 0, 5, 1, 2, 5, 3, 4, 5, 1, 5, 0, 5]
     loss_log_prob_0 = -7.07426
     # dimensions are time x depth
     input_prob_matrix_0 = np.asarray(
@@ -296,9 +312,9 @@ class CTCLossTest(tf.test.TestCase):
 
     # seq_len_1 = 5
 
-    m_targets_1 = [0, 3, -1, 1, 2, -1, 2, 3, -1, 0, -1]
+    m_targets_1 = [5, 0, 3, 5, 1, 2, 5, 2, 3, 5, 0, 5]
 
-    loss_log_prob_1 =-4.72008
+    loss_log_prob_1 = -4.72008
     # dimensions are time x depth
 
     input_prob_matrix_1 = np.asarray(
@@ -325,7 +341,7 @@ class CTCLossTest(tf.test.TestCase):
     inputs = np.asarray(inputs, dtype=np.float32)
 
     # len batch_size array of label vectors
-    labels = MultiLabelSimpleSparseTensorFrom([m_targets_0, m_targets_1])
+    labels = MultiLabelSimpleSparseTensorFrom([m_targets_0, m_targets_1], blank_index_)
 
     # batch_size length vector of sequence_lengths
     seq_lens = np.array([5, 5], dtype=np.int32)
@@ -341,7 +357,7 @@ class CTCLossTest(tf.test.TestCase):
     # convert grad_truth into [max_time x batch_size x depth] Tensor
     grad_truth = np.asarray(grad_truth, dtype=np.float32)
 
-    self._testCTCLoss(inputs, seq_lens, labels, loss_truth, grad_truth)
+    self._testCTCLoss(inputs, seq_lens, labels, loss_truth, grad_truth, blank_index=blank_index_)
 
 if __name__ == "__main__":
   tf.test.main()

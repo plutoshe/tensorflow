@@ -225,7 +225,6 @@ class CpuCTC {
     bool over_threshold = false;
 
     // T should be at least greater than L + number of repeats.
-    CHECK(L + ctcm.repeats <= T);
     ProbT llForward = compute_alphas(L, S, T, mb, ctcm);
     ProbT llBackward = compute_betas_and_grad(llForward, L, S, T, mb, ctcm);
 
@@ -457,11 +456,10 @@ class CpuWarpCTCLossOp : public OpKernel {
     std::vector<int> slot_lengths;
     if (labels_indices_tensor.dim_size(0) > 0) {
       // initialization
-      labels.push_back(blank_index);
       last_first = labels_indices(0, 0);
       last_second = labels_indices(0, 1);
       labels.push_back(labels_values(0));
-      slot_sum = 1; label_sum = 2;
+      slot_sum = 1; label_sum = 1;
 
       for(int i = 1; i < labels_indices_tensor.dim_size(0); i++) {
         int64 first, second;
@@ -471,28 +469,23 @@ class CpuWarpCTCLossOp : public OpKernel {
         label_of_first = labels_values(i);
         if (first == last_first) {
           if (second != last_second) {
-              labels.push_back(blank_index);
-              label_sum++;
               slot_sum++;
           }
           labels.push_back(label_of_first);
           label_sum++;
         } else {
-          labels.push_back(blank_index);
-          label_lengths.push_back(label_sum+1);
-          slot_lengths.push_back(slot_sum);
-          labels.push_back(blank_index);
+          label_lengths.push_back(label_sum);
+          slot_lengths.push_back(slot_sum/2);
           labels.push_back(label_of_first);
           last_first = first;
           slot_sum = 1;
-          label_sum = 2;
+          label_sum = 1;
         }
         last_second = second;
       }
       if (slot_sum != 0) {
-        labels.push_back(blank_index);
-        label_lengths.push_back(label_sum+1);
-        slot_lengths.push_back(slot_sum);
+        label_lengths.push_back(label_sum);
+        slot_lengths.push_back(slot_sum/2);
       }
     }
 
