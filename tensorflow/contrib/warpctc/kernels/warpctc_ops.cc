@@ -36,13 +36,12 @@ class CpuCTCWorkspace {
     return false;
   }
 
-  int setup_labels(const int* plabels, int L, int S, int BLANK) {
+  void setup_labels(const int* plabels, int L, int S, int BLANK) {
     int e_counter = 0;
     int s_counter = 0;
     labels = plabels;
     s_inc[s_counter++] = 1;
 
-    int repeats = 0;
     int l = 1;
     slot_start[0] = 0;
     slot_end[0] = 1;
@@ -65,21 +64,14 @@ class CpuCTCWorkspace {
       }
     }
     for (int i = 1; i < L; ++i) {
-      if (cmp(labels, slot_start, slot_end, i - 1, i)) {
-        s_inc[s_counter++] = slot_end[i * 2 - 1] - slot_start[i * 2 - 1];
-        s_inc[s_counter++] = 1;
-        e_inc[e_counter++] = 1;
-        e_inc[e_counter++] = slot_end[i * 2 + 1] - slot_start[i * 2 + 1];
-        ++repeats;
-      }
-      else {
-        s_inc[s_counter++] = slot_end[i * 2 - 1] - slot_start[i * 2 - 1] + 1;
-        e_inc[e_counter++] = slot_end[i * 2 + 1] - slot_start[i * 2 + 1] + 1;
-      }
+      s_inc[s_counter++] = slot_end[i * 2 - 1] - slot_start[i * 2 - 1];
+      s_inc[s_counter++] = 1;
+      e_inc[e_counter++] = 1;
+      e_inc[e_counter++] = slot_end[i * 2 + 1] - slot_start[i * 2 + 1];
     }
     e_inc[e_counter++] = 1;
 
-    return repeats;
+    return;
   }
 
  public:
@@ -94,7 +86,7 @@ class CpuCTCWorkspace {
     delete[] output;
   }
 
-  CpuCTCWorkspace(int S, int T, int a, int blank_index) : repeats(0), alphabet_size(a) {
+  CpuCTCWorkspace(int S, int T, int a, int blank_index) : alphabet_size(a) {
     alphas = new ProbT[S*T];
     betas = new ProbT[S];
 
@@ -116,7 +108,7 @@ class CpuCTCWorkspace {
   void reset(int L, int S, int T, const int* const labels) {
     std::fill(alphas, alphas + S * T, ctc_helper::neg_inf<ProbT>());
     std::fill(betas, betas + S, ctc_helper::neg_inf<ProbT>());
-    repeats = setup_labels(labels, L, S, blank_index_);
+    setup_labels(labels, L, S, blank_index_);
   }
 
   ProbT* alphas;
@@ -130,7 +122,6 @@ class CpuCTCWorkspace {
   int* s_inc;
 
   ProbT* output;
-  int repeats;
   int blank_index_;
   const int alphabet_size;
 };
@@ -238,7 +229,6 @@ class CpuCTC {
 
 
   ProbT compute_alphas(int L, int S, int T, int mb, CpuCTCWorkspace<ProbT>& ctcm) {
-    int repeats = ctcm.repeats;
     const int* const e_inc = ctcm.e_inc;
     const int* const s_inc = ctcm.s_inc;
     const int* const labels = ctcm.labels;
@@ -248,16 +238,17 @@ class CpuCTC {
 
     Accessor2D<ProbT> alphas(S, ctcm.alphas);
     Accessor3D<ProbT> yprobs(minibatch_, alphabet_size_, probs);
-    int start = ((L + repeats - T) < 0) ? 0 : 1;
+    int least_slot_num = 2 * L - 1;
+    int start = ((least_slot_num - T) < 0) ? 0 : 1;
     int end = L > 0 ? slot_end[1] : 1;
     for (int i = start; i < end; ++i) {
         alphas(0, i) = std::log(yprobs(0, mb, labels[i]));
     }
     for(int t = 1; t < T; ++t) {
       // Still a bit murky here.
-      int remain = L + repeats - (T - t);
+      int remain = least_slot_num - (T - t);
       if(remain >= 0) start += s_inc[remain];
-      if(t <= L + repeats) end += e_inc[t - 1];
+      if(t <= least_slot_num) end += e_inc[t - 1];
       int startloop = start;
 
       if (start == 0) {
@@ -272,13 +263,6 @@ class CpuCTC {
            prev_sum = log_add(prev_sum, alphas(t - 1, j));
         }
         // Skip two if not on blank and not on repeat.
-        if (allow_skip_blank && labels[i] != blank_index_ && l >= 2) {
-
-          for (int j = slot_start[l - 2]; j < slot_end[l - 2]; j++)
-            if (labels[i] != labels[j]) {
-              prev_sum = log_add(prev_sum, alphas(t - 1, j));
-            }
-        }
         alphas(t, i) = prev_sum + std::log(yprobs(t, mb, labels[i]));
       }
     }
@@ -298,7 +282,6 @@ class CpuCTC {
   // Assumed passed in grads are already zeroed!
   ProbT compute_betas_and_grad(ProbT log_partition, int L, int S, int T, int mb,
                                CpuCTCWorkspace<ProbT>& ctcm) {
-    int repeats = ctcm.repeats;
     const int* const e_inc = ctcm.e_inc;
     const int* const s_inc = ctcm.s_inc;
     const int* const labels = ctcm.labels;
@@ -313,8 +296,9 @@ class CpuCTC {
     ProbT* betas = ctcm.betas;
     ProbT* output = ctcm.output;
 
+    int least_slot_num = 2 * L - 1;
     int start = S > 1 ? slot_start[slot_index[S - 2]] : 0;
-    int end = (T > L + repeats) ? S : S-1;
+    int end = (T > least_slot_num) ? S : S-1;
 
     std::fill(output, output + alphabet_size_, ctc_helper::neg_inf<ProbT>());
 
@@ -342,9 +326,9 @@ class CpuCTC {
     }
     //loop from the second to last column all the way to the left
     for(int t = T - 2; t >= 0; --t) {
-      int remain = L + repeats - (T - t);
+      int remain = least_slot_num  - (T - t);
       if(remain >= -1) start -= s_inc[remain + 1];
-      if(t < L + repeats) end -= e_inc[t];
+      if(t < least_slot_num) end -= e_inc[t];
       int endloop = end == S ? end - 1 : end;
 
       std::fill(output, output + alphabet_size_, ctc_helper::neg_inf<ProbT>());
@@ -354,11 +338,6 @@ class CpuCTC {
         for (int j = slot_start[l + 1]; j < slot_end[l + 1]; j++)
           next_sum = log_add(next_sum, betas[j]);
         // Skip two if not on blank and not on repeat.
-        if (labels[i] != blank_index_ && l < S - 2){
-          for (int j = slot_start[l + 2]; j < slot_end[l + 2]; j++)
-            if (labels[i] != labels[j])
-              next_sum = log_add(next_sum, betas[j]);
-        }
         betas[i] = next_sum + std::log(yprobs(t, mb, labels[i]));
 
         //compute alpha * beta in log space
