@@ -30,8 +30,8 @@ class CpuCTCWorkspace {
  private:
 
   void setup_labels(int mb, const int* plabels, int L, int S, int BLANK) {
-    int base_2d = mb * S_size;
-    for (int i = 0; i < S; ++i) {
+    int base_2d = mb * L_size;
+    for (int i = 0; i < L; ++i) {
       labels[i + base_2d] = plabels[i];
     }
 
@@ -40,7 +40,7 @@ class CpuCTCWorkspace {
     slot_end[base_2d] = 1;
     slot_index[base_2d] = 0;
     int last_i = 1;
-    for (int i = 1; i < S; ++i) {
+    for (int i = 1; i < L; ++i) {
       if (labels[base_2d + i] == BLANK) {
         slot_start[base_2d + l] = last_i;
         slot_end[base_2d + l] = i;
@@ -60,7 +60,7 @@ class CpuCTCWorkspace {
     int e_counter = base_2d;
     int s_counter = base_2d;
     s_inc[s_counter++] = 1;
-    for (int i = 1; i < L; ++i) {
+    for (int i = 1; i < S; ++i) {
       s_inc[s_counter++] = slot_end[base_2d + i * 2 - 1] - slot_start[base_2d + i * 2 - 1];
       s_inc[s_counter++] = 1;
       e_inc[e_counter++] = 1;
@@ -87,22 +87,22 @@ class CpuCTCWorkspace {
     delete[] labels;
   }
 
-  CpuCTCWorkspace(int B, int S, int T, int a, int blank_index) : alphabet_size(a), T_size(T), S_size(S) {
-    alphas = new ProbT[B*S*T];
-    betas = new ProbT[B*S];
+  CpuCTCWorkspace(int B, int L, int T, int a, int blank_index) : alphabet_size(a), T_size(T), L_size(L) {
+    alphas = new ProbT[B*L*T];
+    betas = new ProbT[B*L];
 
-    labels = new int[B*S];
+    labels = new int[B*L];
     L_arr = new int[B];
     S_arr = new int[B];
     T_arr = new int[B];
 
-    e_inc = new int[B*S];
-    s_inc = new int[B*S];
+    e_inc = new int[B*L];
+    s_inc = new int[B*L];
 
-    slot_index = new int[B*S];
+    slot_index = new int[B*L];
 
-    slot_end = new int[B*S];
-    slot_start = new int[B*S];
+    slot_end = new int[B*L];
+    slot_start = new int[B*L];
 
 
     output = new ProbT[B*alphabet_size];
@@ -110,8 +110,8 @@ class CpuCTCWorkspace {
   }
 
   void reset(int mb, int L, int S, int T, const int* const labels) {
-    std::fill(alphas + mb * S * T, alphas + (mb + 1) * S * T, ctc_helper::neg_inf<ProbT>());
-    std::fill(betas + mb * S, betas + (mb + 1) * S, ctc_helper::neg_inf<ProbT>());
+    std::fill(alphas + mb * L * T, alphas + (mb + 1) * L * T, ctc_helper::neg_inf<ProbT>());
+    std::fill(betas + mb * L, betas + (mb + 1) * L, ctc_helper::neg_inf<ProbT>());
     L_arr[mb] = L;
     S_arr[mb] = S;
     T_arr[mb] = T;
@@ -134,7 +134,7 @@ class CpuCTCWorkspace {
 
   ProbT* output;
   int blank_index_;
-  const int S_size;
+  const int L_size;
   const int T_size;
   const int alphabet_size;
 };
@@ -163,8 +163,8 @@ class CpuCTC {
     input_lengths(pinput_lengths), costs(pcosts), grads(pgradients),
     probs(nullptr) {
     int maxT = *std::max_element(input_lengths, input_lengths + minibatch_);
-    int maxS = *std::max_element(label_lengths, label_lengths + minibatch_);
-    workspace_ = new CpuCTCWorkspace<ProbT>(minibatch, maxS, maxT, alphabet_size_, blank_index_);
+    int maxL = *std::max_element(label_lengths, label_lengths + minibatch_);
+    workspace_ = new CpuCTCWorkspace<ProbT>(minibatch, maxL, maxT, alphabet_size_, blank_index_);
     // compute softmax, need to make sure the order is right: currently it is t x b x f
     probs = new ProbT[maxT * minibatch_ * alphabet_size_];
   };
@@ -195,8 +195,8 @@ class CpuCTC {
 
     for (int mb = 0; mb < minibatch_; ++mb) {
       const int T = input_lengths[mb]; // Length of utterance (time)
-      const int S = label_lengths[mb]; // Length of utterance (time)
-      const int L = slot_lengths[mb]; // Number of labels in transcription
+      const int L = label_lengths[mb]; // Length of utterance (time)
+      const int S = slot_lengths[mb]; // Number of labels in transcription
 
       int label_count = std::accumulate(label_lengths, label_lengths + mb, 0);
       const int* const labels = flat_labels + label_count;
@@ -244,8 +244,8 @@ class CpuCTC {
 
 
   ProbT compute_alphas(int mb, CpuCTCWorkspace<ProbT>& ctcm) {
-    int start_2d = mb * ctcm.S_size;
-    int start_3d = mb * ctcm.S_size * ctcm.T_size;
+    int start_2d = mb * ctcm.L_size;
+    int start_3d = mb * ctcm.L_size * ctcm.T_size;
     const int T = ctcm.T_arr[mb];
     const int L = ctcm.L_arr[mb];
     const int S = ctcm.S_arr[mb];
@@ -256,11 +256,11 @@ class CpuCTC {
     const int* const slot_start = ctcm.slot_start + start_2d;
     const int* const slot_index = ctcm.slot_index + start_2d;
 
-    Accessor2D<ProbT> alphas(S, ctcm.alphas + start_3d);
+    Accessor2D<ProbT> alphas(L, ctcm.alphas + start_3d);
     Accessor3D<ProbT> yprobs(minibatch_, alphabet_size_, probs);
-    int least_slot_num = 2 * L - 1;
+    int least_slot_num = 2 * S - 1;
     int start = ((least_slot_num - T) < 0) ? 0 : 1;
-    int end = L > 0 ? slot_end[1] : 1;
+    int end = S > 0 ? slot_end[1] : 1;
     for (int i = start; i < end; ++i) {
         alphas(0, i) = std::log(yprobs(0, mb, labels[i]));
     }
@@ -301,11 +301,11 @@ class CpuCTC {
   // NOTE computes gradient w.r.t UNNORMALIZED final layer activations.
   // Assumed passed in grads are already zeroed!
   ProbT compute_betas_and_grad(ProbT log_partition, int mb, CpuCTCWorkspace<ProbT>& ctcm) {
-    int start_2d = mb * ctcm.S_size;
-    int start_3d = mb * ctcm.S_size * ctcm.T_size;
+    int start_2d = mb * ctcm.L_size;
+    int start_3d = mb * ctcm.L_size * ctcm.T_size;
     const int T = ctcm.T_arr[mb];
-    const int L = ctcm.L_arr[mb];
     const int S = ctcm.S_arr[mb];
+    const int L = ctcm.L_arr[mb];
     const int* const e_inc = ctcm.e_inc + start_2d;
     const int* const s_inc = ctcm.s_inc + start_2d;
     const int* const labels = ctcm.labels + start_2d;
@@ -314,16 +314,16 @@ class CpuCTC {
     const int* const slot_index = ctcm.slot_index + start_2d;
 
 
-    Accessor2D<ProbT> alphas(S, ctcm.alphas + start_3d);
+    Accessor2D<ProbT> alphas(L, ctcm.alphas + start_3d);
     Accessor3D<ProbT> yprobs(minibatch_, alphabet_size_, probs);
     Accessor3D<ProbT> ygrads(minibatch_, alphabet_size_, grads);
 
     ProbT* betas = ctcm.betas + start_2d;
     ProbT* output = ctcm.output + mb * ctcm.alphabet_size;
 
-    int least_slot_num = 2 * L - 1;
-    int start = S > 1 ? slot_start[slot_index[S - 2]] : 0;
-    int end = (T > least_slot_num) ? S : S-1;
+    int least_slot_num = 2 * S  - 1;
+    int start = L > 1 ? slot_start[slot_index[L - 2]] : 0;
+    int end = (T > least_slot_num) ? L : L-1;
 
     std::fill(output, output + alphabet_size_, ctc_helper::neg_inf<ProbT>());
 
@@ -354,7 +354,7 @@ class CpuCTC {
       int remain = least_slot_num  - (T - t);
       if(remain >= -1) start -= s_inc[remain + 1];
       if(t < least_slot_num) end -= e_inc[t];
-      int endloop = end == S ? end - 1 : end;
+      int endloop = end == L ? end - 1 : end;
 
       std::fill(output, output + alphabet_size_, ctc_helper::neg_inf<ProbT>());
       for(int i = start; i < endloop; ++i) {
@@ -372,8 +372,8 @@ class CpuCTC {
         output[labels[i]] = log_add(alphas(t, i), output[labels[i]]);
       }
 
-      if (end == S) {
-        int l = slot_index[S - 1];
+      if (end == L) {
+        int l = slot_index[L - 1];
         for (int j = slot_start[l]; j < slot_end[l]; j++) {
           betas[j] = betas[j] + std::log(yprobs(t, mb, blank_index_));
           alphas(t, j) += betas[j];
@@ -394,6 +394,7 @@ class CpuCTC {
         }
       }
     }
+
     ProbT loglike = ctc_helper::neg_inf<ProbT>();
     for(int i = start; i < end; ++i) {
       loglike = log_add(loglike, betas[i]);
