@@ -28,46 +28,43 @@ template<typename ProbT>
 class CpuCTCWorkspace {
 
  private:
-  bool cmp(const int* const labels, const int* const slot_start, const int* const slot_end, int a, int b) {
-    for (int j = slot_start[a]; j < slot_end[a]; j++)
-      for (int k = slot_start[b]; k < slot_end[b]; k++)
-        if (labels[j] == labels[k])
-          return true;
-    return false;
-  }
 
-  void setup_labels(const int* plabels, int L, int S, int BLANK) {
-    int e_counter = 0;
-    int s_counter = 0;
-    labels = plabels;
-    s_inc[s_counter++] = 1;
+  void setup_labels(int mb, const int* plabels, int L, int S, int BLANK) {
+    int base_2d = mb * S_size;
+    for (int i = 0; i < S; ++i) {
+      labels[i + base_2d] = plabels[i];
+    }
 
     int l = 1;
-    slot_start[0] = 0;
-    slot_end[0] = 1;
-    slot_index[0] = 0;
+    slot_start[base_2d] = 0;
+    slot_end[base_2d] = 1;
+    slot_index[base_2d] = 0;
     int last_i = 1;
     for (int i = 1; i < S; ++i) {
-      if (labels[i] == BLANK) {
-        slot_start[l] = last_i;
-        slot_end[l] = i;
+      if (labels[base_2d + i] == BLANK) {
+        slot_start[base_2d + l] = last_i;
+        slot_end[base_2d + l] = i;
         ++l;
-        slot_start[l] = i;
-        slot_end[l] = i + 1;
+        slot_start[base_2d + l] = i;
+        slot_end[base_2d + l] = i + 1;
         // blank setting
-        slot_index[i] = l;
+        slot_index[base_2d + i] = l;
         ++l;
         last_i = i + 1;
       } else {
-        slot_index[i] = l;
+        slot_index[base_2d + i] = l;
         // non-blank  setting
       }
     }
+
+    int e_counter = base_2d;
+    int s_counter = base_2d;
+    s_inc[s_counter++] = 1;
     for (int i = 1; i < L; ++i) {
-      s_inc[s_counter++] = slot_end[i * 2 - 1] - slot_start[i * 2 - 1];
+      s_inc[s_counter++] = slot_end[base_2d + i * 2 - 1] - slot_start[base_2d + i * 2 - 1];
       s_inc[s_counter++] = 1;
       e_inc[e_counter++] = 1;
-      e_inc[e_counter++] = slot_end[i * 2 + 1] - slot_start[i * 2 + 1];
+      e_inc[e_counter++] = slot_end[base_2d + i * 2 + 1] - slot_start[base_2d + i * 2 + 1];
     }
     e_inc[e_counter++] = 1;
 
@@ -84,45 +81,61 @@ class CpuCTCWorkspace {
     delete[] slot_end;
     delete[] slot_start;
     delete[] output;
+    delete[] L_arr;
+    delete[] S_arr;
+    delete[] T_arr;
+    delete[] labels;
   }
 
-  CpuCTCWorkspace(int S, int T, int a, int blank_index) : alphabet_size(a) {
-    alphas = new ProbT[S*T];
-    betas = new ProbT[S];
+  CpuCTCWorkspace(int B, int S, int T, int a, int blank_index) : alphabet_size(a), T_size(T), S_size(S) {
+    alphas = new ProbT[B*S*T];
+    betas = new ProbT[B*S];
 
-    labels = nullptr;
+    labels = new int[B*S];
+    L_arr = new int[B];
+    S_arr = new int[B];
+    T_arr = new int[B];
 
-    e_inc = new int[S];
-    s_inc = new int[S];
+    e_inc = new int[B*S];
+    s_inc = new int[B*S];
 
-    slot_index = new int[S];
+    slot_index = new int[B*S];
 
-    slot_end = new int[S];
-    slot_start = new int[S];
+    slot_end = new int[B*S];
+    slot_start = new int[B*S];
 
 
-    output = new ProbT[alphabet_size];
+    output = new ProbT[B*alphabet_size];
     blank_index_ = blank_index;
   }
 
-  void reset(int L, int S, int T, const int* const labels) {
-    std::fill(alphas, alphas + S * T, ctc_helper::neg_inf<ProbT>());
-    std::fill(betas, betas + S, ctc_helper::neg_inf<ProbT>());
-    setup_labels(labels, L, S, blank_index_);
+  void reset(int mb, int L, int S, int T, const int* const labels) {
+    std::fill(alphas + mb * S * T, alphas + (mb + 1) * S * T, ctc_helper::neg_inf<ProbT>());
+    std::fill(betas + mb * S, betas + (mb + 1) * S, ctc_helper::neg_inf<ProbT>());
+    L_arr[mb] = L;
+    S_arr[mb] = S;
+    T_arr[mb] = T;
+    setup_labels(mb, labels, L, S, blank_index_);
   }
 
   ProbT* alphas;
   ProbT* betas;
-  const int* labels;
+  int* labels;
 
   int* slot_index;
   int* slot_end;
   int* slot_start;
   int* e_inc;
   int* s_inc;
+  int* L_arr;
+  int* T_arr;
+  int* S_arr;
+
 
   ProbT* output;
   int blank_index_;
+  const int S_size;
+  const int T_size;
   const int alphabet_size;
 };
 
@@ -151,7 +164,7 @@ class CpuCTC {
     probs(nullptr) {
     int maxT = *std::max_element(input_lengths, input_lengths + minibatch_);
     int maxS = *std::max_element(label_lengths, label_lengths + minibatch_);
-    workspace_ = new CpuCTCWorkspace<ProbT>(maxS, maxT, alphabet_size_, blank_index_);
+    workspace_ = new CpuCTCWorkspace<ProbT>(minibatch, maxS, maxT, alphabet_size_, blank_index_);
     // compute softmax, need to make sure the order is right: currently it is t x b x f
     probs = new ProbT[maxT * minibatch_ * alphabet_size_];
   };
@@ -186,7 +199,12 @@ class CpuCTC {
       const int L = slot_lengths[mb]; // Number of labels in transcription
 
       int label_count = std::accumulate(label_lengths, label_lengths + mb, 0);
-      costs[mb] = cost_and_grad_kernel(flat_labels + label_count, T, S, L, mb);
+      const int* const labels = flat_labels + label_count;
+      workspace_->reset(mb, L, S, T, labels);
+    }
+    CpuCTCWorkspace<ProbT>& ctcm(*workspace_);
+    for (int mb = 0; mb < minibatch_; ++mb) {
+      costs[mb] = cost_and_grad_kernel(mb, ctcm);
     }
   }
 
@@ -209,15 +227,12 @@ class CpuCTC {
 
   ProbT* probs;
 
-  ProbT cost_and_grad_kernel(const int* const labels, int T, int S, int L, int mb) {
-    workspace_->reset(L, S, T, labels);
-    CpuCTCWorkspace<ProbT>& ctcm(*workspace_);
-
+  ProbT cost_and_grad_kernel(int mb, CpuCTCWorkspace<ProbT>& ctcm) {
     bool over_threshold = false;
 
     // T should be at least greater than L + number of repeats.
-    ProbT llForward = compute_alphas(L, S, T, mb, ctcm);
-    ProbT llBackward = compute_betas_and_grad(llForward, L, S, T, mb, ctcm);
+    ProbT llForward = compute_alphas(mb, ctcm);
+    ProbT llBackward = compute_betas_and_grad(llForward, mb, ctcm);
 
     ProbT diff = std::abs(llForward - llBackward);
     if (diff > ctc_helper::threshold) {
@@ -228,15 +243,20 @@ class CpuCTC {
   }
 
 
-  ProbT compute_alphas(int L, int S, int T, int mb, CpuCTCWorkspace<ProbT>& ctcm) {
-    const int* const e_inc = ctcm.e_inc;
-    const int* const s_inc = ctcm.s_inc;
-    const int* const labels = ctcm.labels;
-    const int* const slot_end = ctcm.slot_end;
-    const int* const slot_start = ctcm.slot_start;
-    const int* const slot_index = ctcm.slot_index;
+  ProbT compute_alphas(int mb, CpuCTCWorkspace<ProbT>& ctcm) {
+    int start_2d = mb * ctcm.S_size;
+    int start_3d = mb * ctcm.S_size * ctcm.T_size;
+    const int T = ctcm.T_arr[mb];
+    const int L = ctcm.L_arr[mb];
+    const int S = ctcm.S_arr[mb];
+    const int* const e_inc = ctcm.e_inc + start_2d;
+    const int* const s_inc = ctcm.s_inc + start_2d;
+    const int* const labels = ctcm.labels + start_2d;
+    const int* const slot_end = ctcm.slot_end + start_2d;
+    const int* const slot_start = ctcm.slot_start + start_2d;
+    const int* const slot_index = ctcm.slot_index + start_2d;
 
-    Accessor2D<ProbT> alphas(S, ctcm.alphas);
+    Accessor2D<ProbT> alphas(S, ctcm.alphas + start_3d);
     Accessor3D<ProbT> yprobs(minibatch_, alphabet_size_, probs);
     int least_slot_num = 2 * L - 1;
     int start = ((least_slot_num - T) < 0) ? 0 : 1;
@@ -280,21 +300,26 @@ class CpuCTC {
   // sum into the gradient associated with each label.
   // NOTE computes gradient w.r.t UNNORMALIZED final layer activations.
   // Assumed passed in grads are already zeroed!
-  ProbT compute_betas_and_grad(ProbT log_partition, int L, int S, int T, int mb,
-                               CpuCTCWorkspace<ProbT>& ctcm) {
-    const int* const e_inc = ctcm.e_inc;
-    const int* const s_inc = ctcm.s_inc;
-    const int* const labels = ctcm.labels;
-    const int* const slot_end = ctcm.slot_end;
-    const int* const slot_start = ctcm.slot_start;
-    const int* const slot_index = ctcm.slot_index;
+  ProbT compute_betas_and_grad(ProbT log_partition, int mb, CpuCTCWorkspace<ProbT>& ctcm) {
+    int start_2d = mb * ctcm.S_size;
+    int start_3d = mb * ctcm.S_size * ctcm.T_size;
+    const int T = ctcm.T_arr[mb];
+    const int L = ctcm.L_arr[mb];
+    const int S = ctcm.S_arr[mb];
+    const int* const e_inc = ctcm.e_inc + start_2d;
+    const int* const s_inc = ctcm.s_inc + start_2d;
+    const int* const labels = ctcm.labels + start_2d;
+    const int* const slot_end = ctcm.slot_end + start_2d;
+    const int* const slot_start = ctcm.slot_start + start_2d;
+    const int* const slot_index = ctcm.slot_index + start_2d;
 
-    Accessor2D<ProbT> alphas(S, ctcm.alphas);
+
+    Accessor2D<ProbT> alphas(S, ctcm.alphas + start_3d);
     Accessor3D<ProbT> yprobs(minibatch_, alphabet_size_, probs);
     Accessor3D<ProbT> ygrads(minibatch_, alphabet_size_, grads);
 
-    ProbT* betas = ctcm.betas;
-    ProbT* output = ctcm.output;
+    ProbT* betas = ctcm.betas + start_2d;
+    ProbT* output = ctcm.output + mb * ctcm.alphabet_size;
 
     int least_slot_num = 2 * L - 1;
     int start = S > 1 ? slot_start[slot_index[S - 2]] : 0;
@@ -369,7 +394,6 @@ class CpuCTC {
         }
       }
     }
-
     ProbT loglike = ctc_helper::neg_inf<ProbT>();
     for(int i = start; i < end; ++i) {
       loglike = log_add(loglike, betas[i]);
